@@ -162,6 +162,11 @@ Printability non-negotiables: ONE connected watertight solid, min wall 1.6mm,
 FDM-safe overhangs, no floating bodies. Iterate until the cad tool JSON shows
 none of: {BLOCKING}.
 
+NUMERIC CONTRACT — every explicit number the brief states (fillet radii, wall
+thicknesses, angles, clearances, zone sizes) MUST appear as an assert in
+params.py's validate() — a brief number with no assert is a fidelity bug
+waiting to ship (eclipse-v2: brief said fillet >=10mm twice, build used 6mm).
+
 FIT-CHECKS — turn the brief's `## Interfaces` section into machine checks:
 write `{out_dir}/fit_checks.py` that loads the exported STL with trimesh,
 builds a mock box per interface (dims/pose from the brief), and asserts each
@@ -279,6 +284,11 @@ Then render the FULL set with `{REVIEW_CMD}` and ensure at least these exist in
 `{out_dir}/{slug}_review/`: `_assembled.png` (hero), `_qa.png` (multi-view grid),
 and the three `*_section_[xyz].png` cuts. These renders become the APPROVED
 REFERENCE the final build must visually match — make every feature legible.
+HERO LEGIBILITY RULE (eclipse-v2 lesson): a stranger must read WHAT the product
+is from the hero render in 3 seconds — orient the view so the defining features
+(aperture, slot, hook...) face the camera, and every key feature from the brief
+must be visibly identifiable in at least one render. If the silhouette is
+ambiguous, add engraved labeling or pick a more explanatory angle.
 
 Reply with ONE line: DRAFT-READY."""
 

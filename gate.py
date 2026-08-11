@@ -40,6 +40,7 @@ def lint_code(out_dir: Path) -> list:
 
 def mesh_stats(stl_path: Path) -> dict:
     import trimesh
+    import numpy as np
 
     m = trimesh.load(str(stl_path), force="mesh")
     areas = m.area_faces
@@ -49,8 +50,40 @@ def mesh_stats(stl_path: Path) -> dict:
         bodies = len(m.split(only_watertight=False))
     except Exception:
         bodies = 1
+    # Graduated lesson (eclipse-v2 2026-08-11, caught by printability lens):
+    # a wide flat internal ceiling (sealed-chamber roof) prints as an
+    # unsupported bridge and sails past the aggregate overhang%. What matters
+    # is bridge SPAN, not area — a 16mm phone slot bridges fine, a 30mm chamber
+    # roof sags. Cluster connected straight-down faces above the bed and
+    # measure each patch's narrowest bounding width.
+    import networkx as nx
+    down_idx = np.where((nz < -0.95) &
+                        (m.triangles_center[:, 2] > m.bounds[0][2] + 3.0))[0]
+    max_span = 0.0
+    if len(down_idx):
+        sel = set(down_idx.tolist())
+        g = nx.Graph((a, b) for a, b in m.face_adjacency
+                     if a in sel and b in sel)
+        g.add_nodes_from(down_idx.tolist())
+        for comp in nx.connected_components(g):
+            comp = list(comp)
+            if areas[comp].sum() < 200:  # ignore trivial patches
+                continue
+            # local span = 2x the farthest any point of the patch sits from the
+            # patch boundary (inscribed-circle diameter) — a 5mm-wide ring is a
+            # 5mm bridge no matter its diameter; a 50mm chamber roof is 50mm.
+            edges = np.sort(m.faces[comp][:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2), axis=1)
+            uniq, cnt = np.unique(edges, axis=0, return_counts=True)
+            bverts = np.unique(uniq[cnt == 1])
+            if not len(bverts):
+                continue
+            bpts = m.vertices[bverts][:, :2]
+            cpts = m.triangles_center[comp][:, :2]
+            d = np.sqrt(((cpts[:, None, :] - bpts[None, :, :]) ** 2).sum(-1)).min(1)
+            max_span = max(max_span, float(2.0 * d.max()))
     return {"watertight": bool(m.is_watertight), "volume_mm3": float(abs(m.volume)),
             "bodies": max(1, bodies), "overhang_pct": round(overhang, 2),
+            "bridge_span_mm": round(max_span, 1),
             "bbox_mm": [round(x, 1) for x in (m.bounds[1] - m.bounds[0]).tolist()]}
 
 
@@ -105,6 +138,8 @@ def main() -> int:
             fails.append(f"bodies={report['bodies']}")
         if report["overhang_pct"] > OVERHANG_FAIL_PCT:
             fails.append(f"overhang={report['overhang_pct']}%")
+        if report.get("bridge_span_mm", 0) > 25:
+            fails.append(f"bridge_span={report['bridge_span_mm']}mm>25")
         if report.get("sliced") is False:
             fails.append("slice_failed")
         if PRINT_MIN_MAX > 0 and report.get("print_min") and report["print_min"] > PRINT_MIN_MAX:
