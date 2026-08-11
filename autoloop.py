@@ -84,6 +84,12 @@ def main() -> int:
     status = "OK" if r.returncode == 0 and gate == "PASS" else "NEEDS ATTENTION"
     telegram(f"text2cad daily cycle [{status}]\n{tail[:2500]}")
 
+    # green cycle -> import into Panda Social as DRAFT (human flips public)
+    if gate == "PASS" and slug not in ("?", ""):
+        pub = subprocess.run([sys.executable, str(HERE / "publish.py"), slug],
+                             cwd=HERE, capture_output=True, text=True, timeout=600)
+        print("publish:", (pub.stdout or pub.stderr).strip()[-200:])
+
     # lessons tier auto-commit (code tier is improve.py's PR flow)
     changed = [f for f in LESSON_FILES
                if sh(["git", "diff", "--quiet", "--", f]).returncode != 0]
