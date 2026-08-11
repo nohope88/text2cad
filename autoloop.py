@@ -52,6 +52,16 @@ def main() -> int:
         print(f"[{today}] cycle already ran — skip")
         return 0
 
+    # trend source lives on the personal VM (tailnet) — alarm early if dark,
+    # a dead MCP would otherwise surface as a confusing discover failure
+    mcp = sh(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+              "--max-time", "5", "http://100.82.132.78:8848/mcp"])
+    if mcp.stdout.strip() in ("", "000"):
+        msg = "text2cad autoloop: second-brain MCP unreachable (personal VM down?) — cycle skipped, will retry tomorrow"
+        print(msg)
+        telegram(msg)
+        return 1
+
     print(f"[{today}] cycle start")
     env = dict(os.environ)
     env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
