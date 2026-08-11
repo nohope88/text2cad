@@ -5,17 +5,55 @@ product people would impulse-buy, and produces print-ready `.step`/`.stl` —
 fully automatic, one cycle per day.
 
 ```
-INPUT: trend X/HN (second-brain MCP)  |  or a direct prompt
-  ① DISCOVER   5 ideas → scored → top-3 → winner + reason
-  ② BRIEF      web research (must-have checklist) + spec mm + Interfaces
-  ③ DRAFT      draft CAD → hero + multi-view renders (Telegram FYI)
-  ④ BUILD      compose from approved GOLDEN BLOCKS + visual contract
-               + auto-generated fit_checks.py from Interfaces
-  ⑤ GATE       trimesh + OrcaSlicer slice + lesson-linter + fit-checks
-  ⑥ PANEL      3 independent lenses: printability / fidelity / sellability
-  ⑦ REPAIR     severity-tiered (broken 2 / functional 3 / cosmetic 2),
-               exhausted → Telegram escalation
-OUTPUT: out/<slug>/  .step + .stl + renders + review notes + run.json ($)
+ INPUT ────────────────────────────────────────────────────────────────
+   X/HN trends (second-brain MCP)          or a direct prompt
+        │                                        │
+        ▼                                        │
+ ┌─────────────────┐   discover_lessons.md      │
+ │ ① DISCOVER      │◀──(taste learned from      │
+ │ 5 ideas → score │    human rejects)          │
+ │ top-3 → WINNER  │                            │
+ └────────┬────────┘                            │
+          ▼                                     ▼
+ ┌──────────────────────────────────────────────────┐
+ │ ② BRIEF                                          │
+ │ 🔍 web research → must-have checklist            │
+ │ spec in mm + ## Interfaces (device, cable, hand) │
+ └────────┬─────────────────────────────────────────┘
+          ▼
+ ┌─────────────────┐
+ │ ③ DRAFT CAD     │──▶ hero.png + multi-view ──▶ 📱 Telegram (FYI;
+ └────────┬────────┘    saved to reference/         --auto skips waiting)
+          ▼
+ ┌──────────────────────────────────────────────────┐   ┌─────────────┐
+ │ ④ BUILD                                          │◀──│ blocks/     │
+ │ compose from GOLDEN BLOCKS (human-approved)      │   │ testbench-  │
+ │ visual contract: match reference/ renders        │   │ verified    │
+ │ writes fit_checks.py from Interfaces             │   └─────────────┘
+ └────────┬─────────────────────────────────────────┘
+          ▼                                  lessons.md
+ ┌──────────────────────────────────┐   (hard rules, injected
+ │ ⑤ GATE  (no LLM)                 │    into every prompt)
+ │ trimesh: watertight? 1 body?     │        ▲
+ │ OrcaSlicer real slice + print est│        │ repeated lesson MUST
+ │ lesson-linter on code            │        │ graduate to code
+ │ runs fit_checks.py               │        │
+ └────────┬─────────────────────────┘        │
+          ▼                                  │
+ ┌──────────────────────────────────┐        │
+ │ ⑥ PANEL — 3 independent lenses   │        │
+ │ printability │ fidelity │ sell   │        │
+ └────────┬─────────────────────────┘        │
+          ▼                                  │
+ ┌──────────────────────────────────┐        │
+ │ ⑦ REPAIR (severity-tiered)       │────────┘
+ │ broken 2 / functional 3 / cosm 2 │──▶ budget exhausted
+ │ re-gate + rescore failed lenses  │    → 📱 ESCALATE
+ └────────┬─────────────────────────┘
+          ▼ all green
+ OUTPUT ──────────────────────────────────────────────────────────────
+   out/<slug>/  part.step + part.stl + renders + review notes
+                + run.json (cost/turns per phase)
 ```
 
 ## Loops & self-improvement
