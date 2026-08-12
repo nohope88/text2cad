@@ -40,6 +40,27 @@ def upload(path: Path, token: str) -> str:
     return m.group(0)
 
 
+def upload_project(out_dir: Path, slug: str, project_url: str) -> bool:
+    """Push the FE project files (assembled STL + _tree.json) to the history's
+    CDN prefix so the platform viewer isn't empty. Best-effort: a failure keeps
+    the draft usable (thumbnails still show) and the bridge pattern
+    (out/eclipse-v2/gcs_project.py) can repair later."""
+    stl = out_dir / f"{slug}.stl"
+    if not stl.is_file():
+        stl = out_dir / "main.stl"
+    if not stl.is_file():
+        print("publish: no STL found — viewer stays empty until bridged")
+        return False
+    r = subprocess.run(["/root/gcsvenv/bin/python", str(HERE / "gcs_upload_project.py"),
+                        str(stl), project_url],
+                       capture_output=True, text=True, timeout=300)
+    print(r.stdout.strip())
+    if r.returncode != 0:
+        print(f"publish: project upload FAILED (bridge later): {r.stderr[-300:]}")
+        return False
+    return True
+
+
 def telegram(text: str) -> None:
     tok = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat = os.environ.get("TELEGRAM_CHAT_DM", "")
@@ -95,7 +116,11 @@ def main() -> int:
         raise SystemExit(f"importdesign failed: {r.stderr[-300:]}")
     info = json.loads(r.stdout.strip().splitlines()[-1])
     (out_dir / "published.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
-    telegram(f"📦 text2cad DRAFT imported: {title}\nid={info['id']} status={info['status']}\n"
+    viewer = ""
+    if info.get("project_url"):
+        viewer = "" if upload_project(out_dir, slug, info["project_url"]) \
+            else "\n⚠ project files NOT uploaded — viewer trống, cần chạy bridge."
+    telegram(f"📦 text2cad DRAFT imported: {title}\nid={info['id']} status={info['status']}{viewer}\n"
              f"Duyệt trong admindash → đổi status sang public để lên feed.")
     print(f"published as draft: {info}")
     return 0

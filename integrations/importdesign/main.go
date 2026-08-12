@@ -127,6 +127,7 @@ func main() {
 
 	out, _ := json.Marshal(map[string]string{
 		"id": design.ID.Hex(), "slug": design.Slug, "status": string(design.Status),
+		"project_url": pu,
 	})
 	fmt.Println(string(out))
 }
