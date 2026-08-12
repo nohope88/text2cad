@@ -265,7 +265,7 @@ sight.{discover_lessons_block()}
 PROCESS:
 1. Identify 4-6 trending themes with broad consumer attention.
 2. Brainstorm 5 product ideas riding those themes. Constraints: single-piece FDM
-   print, no supports, fits 180x180x180mm, printable in <= 6 hours at 0.2mm,
+   print, no supports, fits 180x180x180mm,
    NO copyrighted/trademarked IP (no movie/game/brand replicas), functional or
    giftable (not just a figurine unless truly irresistible).
 3. Score each 0-10 on: trend_heat, buy_on_sight, printability, ip_safety,
