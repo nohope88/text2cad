@@ -307,7 +307,7 @@ PROCESS:
    on a common category (pen holder, phone stand, organizer) is the weakest
    form of idea. Print-in-place mechanisms and supports ARE allowed when the
    payoff justifies them (one print job — no loose multi-part assemblies).
-   Hard constraints (only these): fits 180x180x180mm, NO copyrighted/
+   Hard constraints (only these): TOTAL bbox fits 160x160x180mm (the slice-gate A1 mini rejects wider footprints — verified 2026-08-12), NO copyrighted/
    trademarked IP (no movie/game/brand replicas).
 3. Score each 0-10 on TWO axes only: printability (10 = prints reliably on a
    stock FDM printer at 0.2mm) and usability (10 = solves a real recurring
