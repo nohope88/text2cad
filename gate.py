@@ -107,7 +107,14 @@ def slice_stl(stl_path: Path) -> dict:
             return {"sliced": False, "slice_error": str(e)[:200]}
         gcodes = sorted(Path(td).glob("*.gcode"))
         if r.returncode != 0 or not gcodes:
-            return {"sliced": False, "slice_error": (r.stderr or r.stdout)[-200:]}
+            err = (r.stderr or r.stdout)[-200:]
+            rj = Path(td) / "result.json"
+            if rj.is_file():
+                try:
+                    err = json.loads(rj.read_text()).get("error_string") or err
+                except (OSError, ValueError):
+                    pass
+            return {"sliced": False, "slice_error": err}
         gcode = gcodes[0]
         out = {"sliced": True, "print_min": None, "filament_g": None}
         head = gcode.read_text(encoding="utf-8", errors="ignore")[:16000]
