@@ -26,6 +26,7 @@ import (
 	"pandasocial/pkg/store"
 	"pandasocial/services"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -116,6 +117,12 @@ func main() {
 	}
 	if err := store.Create(ctx, hist); err != nil {
 		log.Fatalf("create design_history: %v", err)
+	}
+	// Link the head the same way services/import.go does (CurrentHistoryID:
+	// &history.ID) — without it displayHistoryID resolves nil and the design
+	// shows no version anywhere (terminal-cursor-pen-holder, 2026-08-12).
+	if err := store.UpdateFields(ctx, design, design.ID, bson.M{"current_history_id": hist.ID}); err != nil {
+		log.Fatalf("link current_history_id: %v", err)
 	}
 
 	out, _ := json.Marshal(map[string]string{
