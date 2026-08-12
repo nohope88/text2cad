@@ -68,7 +68,8 @@ def model_for(phase: str) -> str:
     return os.environ.get(f"{phase.upper()}_MODEL", default)
 
 
-def run_phase(name: str, prompt: str, out_dir: Path, max_turns: int, run_log: dict) -> str:
+def run_phase(name: str, prompt: str, out_dir: Path, max_turns: int, run_log: dict,
+              timeout_s: int = 7200) -> str:
     model = model_for(name)
     print(f"[{name}] model={model} max_turns={max_turns} ...", flush=True)
     t0 = time.time()
@@ -79,14 +80,20 @@ def run_phase(name: str, prompt: str, out_dir: Path, max_turns: int, run_log: di
            "--allowedTools", allowed,
            "--add-dir", str(out_dir), "--add-dir", str(SKILLS), "--add-dir", str(HERE),
            "--max-turns", str(max_turns), "--output-format", "json"]
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=out_dir, env=phase_env())
     try:
-        data = json.loads(r.stdout.strip().splitlines()[-1])
-    except (json.JSONDecodeError, IndexError):
-        data = {"result": r.stdout[-2000:], "error": r.stderr[-2000:]}
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=out_dir,
+                           env=phase_env(), timeout=timeout_s)
+        try:
+            data = json.loads(r.stdout.strip().splitlines()[-1])
+        except (json.JSONDecodeError, IndexError):
+            data = {"result": r.stdout[-2000:], "error": r.stderr[-2000:]}
+        default_err = r.returncode != 0
+    except subprocess.TimeoutExpired:
+        data = {"result": "", "error": f"phase timed out after {timeout_s}s"}
+        default_err = True
     entry = {"model": model, "wall_s": round(time.time() - t0, 1),
              "num_turns": data.get("num_turns"), "cost_usd": data.get("total_cost_usd"),
-             "is_error": data.get("is_error", r.returncode != 0)}
+             "is_error": data.get("is_error", default_err)}
     run_log[name] = entry
     (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
     result = (data.get("result") or "").strip()
@@ -201,11 +208,13 @@ YOUR LENS — {lens.upper()}: {LENSES[lens]}
 
 Read `brief.md`, `gate.json`, and EVERY render in `{slug}_review/` (re-render
 with `{REVIEW_CMD}` if none exist). Do NOT edit part files — verdict only.
-Write `review_{lens}.md`: its FIRST line must be `Verdict: PASS` or
-`Verdict: FAIL <one-sentence reason>`, findings below. Write the file as soon
-as you have a verdict — never leave it for a final turn you may not get.
+Write `review_{lens}.md`: its FIRST line must be `Verdict: PASS <score>/10`
+or `Verdict: FAIL <score>/10 <one-sentence reason>` — <score> grades how close
+the part is to passing YOUR lens (10 = flawless, 8 = minimum pass, one decimal
+ok); findings below. Write the file as soon as you have a verdict — never
+leave it for a final turn you may not get.
 
-Reply with ONE line: `PASS` or `FAIL <one-sentence reason>`."""
+Reply with ONE line: `PASS <score>/10` or `FAIL <score>/10 <one-sentence reason>`."""
 
 
 def lens_verdict(out_dir: Path, lens: str, reply: str, mtime_before) -> str:
@@ -223,14 +232,41 @@ def lens_verdict(out_dir: Path, lens: str, reply: str, mtime_before) -> str:
     return "FAIL no output"
 
 
+def lens_score(verdict: str) -> float | None:
+    m = re.search(r"(\d+(?:\.\d+)?)\s*/\s*10", verdict or "")
+    return float(m.group(1)) if m else None
+
+
+def scores_improving(out_dir: Path) -> bool:
+    """True when every still-failing lens scored strictly higher in the last
+    panel round than the round before — grounds for one bonus repair."""
+    try:
+        hist = json.loads((out_dir / "panel_history.json").read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if len(hist) < 2:
+        return False
+    prev, cur = hist[-2], hist[-1]
+    failing = [k for k, v in cur.items() if not v.startswith("PASS")]
+    pairs = [(lens_score(prev.get(k)), lens_score(cur.get(k))) for k in failing]
+    return bool(pairs) and all(a is not None and b is not None and b > a for a, b in pairs)
+
+
 def run_panel(slug: str, out_dir: Path, run_log: dict, lenses=None) -> dict:
     """Independent lens sessions, separate contexts (circuit-style panel)."""
     results = dict(run_log.get("panel") or {})
     for lens in (lenses or LENSES):
         f = out_dir / f"review_{lens}.md"
         mtime_before = f.stat().st_mtime if f.is_file() else None
-        r = run_phase(f"lens-{lens}", lens_prompt(slug, out_dir, lens), out_dir, 35, run_log)
+        r = run_phase(f"lens-{lens}", lens_prompt(slug, out_dir, lens), out_dir, 35, run_log, timeout_s=2400)
         results[lens] = lens_verdict(out_dir, lens, r, mtime_before)
+    hist_f = out_dir / "panel_history.json"
+    try:
+        hist = json.loads(hist_f.read_text(encoding="utf-8"))
+    except Exception:
+        hist = []
+    hist.append(results)
+    hist_f.write_text(json.dumps(hist, indent=2), encoding="utf-8")
     return results
 
 
@@ -344,6 +380,26 @@ def telegram_send_proposal(out_dir: Path, slug: str) -> str:
     return "telegram: proposal sent"
 
 
+def telegram_send_photo(img: Path, caption: str) -> None:
+    tok = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat = os.environ.get("TELEGRAM_CHAT_DM", "").strip()
+    if tok and chat and img.is_file():
+        subprocess.run(["curl", "-s", f"https://api.telegram.org/bot{tok}/sendPhoto",
+                        "-F", f"chat_id={chat}", "-F", f"photo=@{img}",
+                        "-F", f"caption={caption}"], capture_output=True, timeout=60)
+
+
+def hero_render(slug: str, out_dir: Path) -> Path | None:
+    rd = out_dir / f"{slug}_review"
+    if not rd.is_dir():
+        return None
+    pngs = sorted(rd.glob("*.png"), key=lambda p: p.stat().st_mtime)
+    for p in reversed(pngs):
+        if "hero" in p.name or "assembled" in p.name:
+            return p
+    return pngs[-1] if pngs else None
+
+
 def repair_prompt(slug: str, out_dir: Path, fails: list) -> str:
     gate_cmd = f"{VENV_PY} {GATE_PY} {out_dir}"
     return f"""{HEADLESS_WARNING}
@@ -351,6 +407,12 @@ def repair_prompt(slug: str, out_dir: Path, fails: list) -> str:
 You are a REPAIR session of a text-to-CAD pipeline, in `{out_dir}`. Previous
 sessions left this part FAILING its printability gate: {fails}.{lessons_block()}
 
+0. Read `panel_history.json` (every prior panel verdict, oldest -> newest) and
+   the current `review_*.md` files FIRST. Treat prior verdicts as a REGRESSION
+   SUITE: past repair rounds oscillated — each fixed its named fail while
+   quietly re-breaking a feature an earlier round had already accepted. A fix
+   that re-breaks a previously-PASSed lens or re-opens an old finding is worse
+   than no fix.
 1. Read `gate.json`, `params.py`, `main.py`, `{HERE}/blocks/BLOCKS.md` (prefer
    swapping broken hand-built geometry for a verified golden block), and
    `{CADCODE}/SKILL.md` (the sections on booleans/validation). Diagnose the
@@ -426,7 +488,7 @@ def run_arbitration(slug: str, out_dir: Path, fails: list, tier: str,
     arb_file = out_dir / "arbitration.md"
     arb_mtime = arb_file.stat().st_mtime if arb_file.is_file() else None
     arb = run_phase("arbitration", arbitration_prompt(slug, out_dir, fails),
-                    out_dir, 50, run_log)
+                    out_dir, 50, run_log, timeout_s=3600)
     last = (arb or "").strip().splitlines()[-1] if (arb or "").strip() else ""
     if not last.startswith(("PROPOSE", "NO-CONFLICT")) and arb_file.is_file() \
             and (arb_mtime is None or arb_file.stat().st_mtime > arb_mtime):
@@ -509,7 +571,7 @@ def main() -> int:
         tmp.mkdir(parents=True, exist_ok=True)
         run_log = {"mode": "discover", "trends": [str(t) for t in trends] or ["second-brain-mcp"]}
         print(f"== text2cad discover: trends={[t.name for t in trends] or 'second-brain MCP'}")
-        run_phase("discover", discover_prompt(tmp, trends), tmp, 25, run_log)
+        run_phase("discover", discover_prompt(tmp, trends), tmp, 25, run_log, timeout_s=2400)
         disc = tmp / "discover.md"
         if not disc.is_file():
             print("ABORT: discover.md not produced"); return 1
@@ -526,10 +588,10 @@ def main() -> int:
         product_prompt = p.group(1).strip() if p else slug.replace("-", " ")
         run_log["prompt"] = product_prompt
 
-        run_phase("brief", brief_prompt(product_prompt, out_dir), out_dir, 16, run_log)
+        run_phase("brief", brief_prompt(product_prompt, out_dir), out_dir, 16, run_log, timeout_s=1800)
         if not (out_dir / "brief.md").is_file():
             print("ABORT: brief.md was not produced"); return 1
-        run_phase("draft", draft_prompt(slug, out_dir), out_dir, 45, run_log)
+        run_phase("draft", draft_prompt(slug, out_dir), out_dir, 45, run_log, timeout_s=3600)
         rd = out_dir / f"{slug}_review"
         for src, dst in ((rd / "_assembled.png", "hero.png"), (rd / "_qa.png", "parts.png")):
             if src.is_file():
@@ -593,11 +655,11 @@ def main() -> int:
             run_log = {"prompt": args.prompt, "slug": slug}
             print(f"== text2cad: {slug} -> {out_dir}")
 
-            run_phase("brief", brief_prompt(args.prompt, out_dir), out_dir, 16, run_log)
+            run_phase("brief", brief_prompt(args.prompt, out_dir), out_dir, 16, run_log, timeout_s=1800)
             if not (out_dir / "brief.md").is_file():
                 print("ABORT: brief.md was not produced"); return 1
 
-        run_phase("build", build_prompt(slug, out_dir), out_dir, 120, run_log)
+        run_phase("build", build_prompt(slug, out_dir), out_dir, 120, run_log, timeout_s=10800)
         if not list(out_dir.glob("*.stl")):
             print("ABORT: no .stl produced"); return 1
 
@@ -611,18 +673,26 @@ def main() -> int:
 
     spent = {t: 0 for t in TIER_BUDGET}
     attempt = 0
+    bonus_granted = False
     while not (run_log["gate"].get("pass") and not lens_fails):
         fails = (run_log["gate"].get("fails") or []) + lens_fails or ["unknown"]
         tier = fail_tier(fails)
-        if spent[tier] >= TIER_BUDGET[tier]:
+        if spent[tier] >= TIER_BUDGET[tier] + (1 if bonus_granted else 0):
             run_arbitration(slug, out_dir, fails, tier, spent[tier], run_log)
             break
+        if spent[tier] >= TIER_BUDGET[tier]:
+            if not scores_improving(out_dir):
+                run_arbitration(slug, out_dir, fails, tier, spent[tier], run_log)
+                break
+            bonus_granted = True
+            telegram_send_text(f"{slug}: budget exhausted but failing lens scores "
+                               f"still climbing — granting 1 bonus repair")
         spent[tier] += 1
         attempt += 1
         verdict = run_phase(f"repair{attempt}",
                             repair_prompt(slug, out_dir, fails) +
                             f"\nSeverity tier: {tier.upper()} (attempt {spent[tier]}/{TIER_BUDGET[tier]} for this tier).",
-                            out_dir, 50, run_log)
+                            out_dir, 50, run_log, timeout_s=5400)
         stuck = (verdict or "").strip().splitlines()[-1] if (verdict or "").strip() else ""
         if stuck.startswith("STUCK"):
             # repair declared itself stuck — skip the remaining repair budget
@@ -636,6 +706,12 @@ def main() -> int:
             run_log["panel"] = run_panel(slug, out_dir, run_log, lenses=failed)
             lens_fails = [f"lens:{k} {v}" for k, v in run_log["panel"].items()
                           if not v.startswith("PASS")]
+        hero = hero_render(slug, out_dir)
+        if hero:
+            panel = run_log.get("panel") or {}
+            telegram_send_photo(hero, f"{slug} repair{attempt}: " + (" ".join(
+                f"{k}:{' '.join(str(v).split()[:2])}" for k, v in panel.items())
+                or f"gate={'PASS' if run_log['gate'].get('pass') else 'FAIL'}"))
 
     panel = run_log.get("panel") or {}
     verdict = ("PANEL " + " ".join(f"{k}:{'PASS' if v.startswith('PASS') else 'FAIL'}"
