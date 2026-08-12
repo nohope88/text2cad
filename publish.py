@@ -89,11 +89,14 @@ def main() -> int:
         rest = brief[m.end():].lstrip().splitlines()
         title = next((l.strip() for l in rest if l.strip() and not l.startswith("#")), "")
     title = (title or slug.replace("-", " ").title())[:120]
-    paras = [p.strip() for p in brief.split("\n\n") if p.strip() and not p.startswith("#")]
-    desc = re.sub(r"[*_`]", "", paras[0])[:500] if paras else title
     run = json.loads((out_dir / "run.json").read_text(encoding="utf-8")) \
         if (out_dir / "run.json").is_file() else {}
     prompt = run.get("prompt", "")
+    # Briefs may be a fenced ```design-brief JSON block with no prose at all —
+    # drop fenced blocks first so raw JSON never becomes the description.
+    prose = re.sub(r"```.*?```", "", brief, flags=re.S)
+    paras = [p.strip() for p in prose.split("\n\n") if p.strip() and not p.startswith("#")]
+    desc = re.sub(r"[*_`]", "", paras[0])[:500] if paras else (prompt or title)[:500]
 
     thumbs = []
     for name in ("hero.png", "parts.png"):
