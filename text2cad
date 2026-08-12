@@ -264,18 +264,24 @@ sight.{discover_lessons_block()}
 
 PROCESS:
 1. Identify 4-6 trending themes with broad consumer attention.
-2. Brainstorm 5 product ideas riding those themes. Constraints: single-piece FDM
-   print, no supports, fits 180x180x180mm,
-   NO copyrighted/trademarked IP (no movie/game/brand replicas), functional or
-   giftable (not just a figurine unless truly irresistible).
-3. Score each 0-10 on: trend_heat, buy_on_sight, printability, ip_safety,
-   print_cost (10 = cheap/fast). Self-critique once against the lessons above,
-   adjust scores, then keep the TOP 3.
-4. Pick the winner (highest weighted total; buy_on_sight x2 weight).
+2. Brainstorm 5 product ideas riding those themes — each from a DIFFERENT
+   interaction class (kinetic/mechanical, optical/light, modular/stackable,
+   wearable/carry, desk/functional). Favor inventive mechanisms; a themed skin
+   on a common category (pen holder, phone stand, organizer) is the weakest
+   form of idea. Print-in-place mechanisms and supports ARE allowed when the
+   payoff justifies them (one print job — no loose multi-part assemblies).
+   Hard constraints (only these): fits 180x180x180mm, NO copyrighted/
+   trademarked IP (no movie/game/brand replicas).
+3. Score each 0-10 on TWO axes only: printability (10 = prints reliably on a
+   stock FDM printer at 0.2mm) and usability (10 = solves a real recurring
+   need — the buyer still uses it weekly a month later, not shelf decor).
+4. WINNER = the most clever/novel candidate among those scoring >=7 on BOTH
+   axes. Self-critique once: "does this already exist on every marketplace?"
+   and "would a stranger call it clever?" — kill lookalikes, keep daring.
 
 OUTPUT — write `{out_dir}/discover.md`:
 - The 4-6 themes you saw (one line each, with which posts signal them)
-- Top-3 table: | candidate | trend_heat | buy_on_sight | printability | ip_safety | print_cost | total |
+- All-5 table: | candidate | class | printability | usability | why it is clever |
 - `WINNER: <kebab-case-slug>` on its own line
 - 3-5 sentences: why this wins + which trend it rides + who buys it
 - One-line product prompt for the brief phase, starting `PROMPT: `
