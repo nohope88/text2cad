@@ -200,17 +200,36 @@ YOUR LENS — {lens.upper()}: {LENSES[lens]}
 
 Read `brief.md`, `gate.json`, and EVERY render in `{slug}_review/` (re-render
 with `{REVIEW_CMD}` if none exist). Do NOT edit part files — verdict only.
-Write `review_{lens}.md` (verdict + concise findings).
+Write `review_{lens}.md`: its FIRST line must be `Verdict: PASS` or
+`Verdict: FAIL <one-sentence reason>`, findings below. Write the file as soon
+as you have a verdict — never leave it for a final turn you may not get.
 
 Reply with ONE line: `PASS` or `FAIL <one-sentence reason>`."""
+
+
+def lens_verdict(out_dir: Path, lens: str, reply: str, mtime_before) -> str:
+    """Reply's last line; else fall back to the Verdict: line in the lens's
+    review_<lens>.md — but only if the file was (re)written by THIS lens run
+    (mtime check), so a stale file from an earlier run can't vote."""
+    last = (reply or "").strip().splitlines()[-1] if (reply or "").strip() else ""
+    if last.startswith(("PASS", "FAIL")):
+        return last
+    f = out_dir / f"review_{lens}.md"
+    if f.is_file() and (mtime_before is None or f.stat().st_mtime > mtime_before):
+        m = re.search(r"Verdict\W{0,4}(PASS|FAIL)\b\W{0,3}(.*)", f.read_text(encoding="utf-8"), re.I)
+        if m:
+            return (m.group(1).upper() + " " + m.group(2).strip().strip("*")).strip()
+    return "FAIL no output"
 
 
 def run_panel(slug: str, out_dir: Path, run_log: dict, lenses=None) -> dict:
     """Independent lens sessions, separate contexts (circuit-style panel)."""
     results = dict(run_log.get("panel") or {})
     for lens in (lenses or LENSES):
-        r = run_phase(f"lens-{lens}", lens_prompt(slug, out_dir, lens), out_dir, 25, run_log)
-        results[lens] = (r or "").strip().splitlines()[-1] if r else "FAIL no output"
+        f = out_dir / f"review_{lens}.md"
+        mtime_before = f.stat().st_mtime if f.is_file() else None
+        r = run_phase(f"lens-{lens}", lens_prompt(slug, out_dir, lens), out_dir, 35, run_log)
+        results[lens] = lens_verdict(out_dir, lens, r, mtime_before)
     return results
 
 
@@ -342,6 +361,33 @@ sessions left this part FAILING its printability gate: {fails}.{lessons_block()}
 Reply with ONE line: `REPAIRED` or `STUCK <reason>`."""
 
 
+def arbitration_prompt(slug: str, out_dir: Path, fails: list) -> str:
+    return f"""{HEADLESS_WARNING}
+
+You are the ARBITRATION phase of a text-to-CAD pipeline, in `{out_dir}`.
+The repair budget is exhausted and the part still fails: {fails}.
+Your job: decide whether what remains is a genuine SPEC CONFLICT — brief.md
+demanding things that are mutually impossible (geometrically, physically, or
+against its own other numbers) — as opposed to a build defect or reviewer
+noise. Repair sessions may have left their diagnosis in `params.py` comments
+and their replies; weigh those.
+
+1. Read `brief.md`, `gate.json`, `params.py`, `main.py`, every
+   `review_*.md`, and the renders in `{slug}_review/`.
+2. If the remaining fails are NOT a spec conflict (fixable defect, or the
+   lens verdict looks wrong), do nothing and reply `NO-CONFLICT <reason>`.
+3. If they ARE a spec conflict: write `brief_proposed.md` — the FULL amended
+   brief, changing the MINIMUM set of numbers that resolves the conflict,
+   with an `## Amendments` section at the end stating each change and why.
+   NEVER relax safety-critical requirements (viewing safety, min walls,
+   watertightness) and NEVER exceed the user's stated envelope. Do NOT touch
+   `brief.md` itself — the human applies the proposal.
+4. Also write `arbitration.md`: the conflict in one paragraph, the changed
+   numbers as a short before → after list, and what the change trades away.
+
+Reply with ONE line: `PROPOSE <one-sentence summary>` or `NO-CONFLICT <reason>`."""
+
+
 TIER_BUDGET = {"broken": 2, "functional": 3, "cosmetic": 2}
 
 
@@ -371,6 +417,8 @@ def main() -> int:
     ap.add_argument("--no-slice", action="store_true", help="mesh-only gate")
     ap.add_argument("--repair", action="store_true",
                     help="skip brief/build/review; gate + repair-loop an existing out/<slug>")
+    ap.add_argument("--amend", action="store_true",
+                    help="apply out/<slug>/brief_proposed.md from arbitration, then re-review")
     ap.add_argument("--review", action="store_true",
                     help="skip brief/build; review + gate + repair-loop an existing out/<slug>")
     ap.add_argument("--max-repairs", type=int, default=3)
@@ -385,6 +433,9 @@ def main() -> int:
     args = ap.parse_args()
 
     load_env()
+
+    if args.amend:
+        args.review = True
 
     if args.reject:
         slug = args.slug or args.prompt
@@ -460,6 +511,13 @@ def main() -> int:
             print(f"ABORT: no .stl in {out_dir} to repair"); return 1
         run_log = json.loads((out_dir / "run.json").read_text(encoding="utf-8")) \
             if (out_dir / "run.json").is_file() else {"slug": slug}
+        if args.amend:
+            prop = out_dir / "brief_proposed.md"
+            if not prop.is_file():
+                print(f"ABORT: no brief_proposed.md in {out_dir} — nothing to amend"); return 1
+            (out_dir / "brief.md").write_text(prop.read_text(encoding="utf-8"), encoding="utf-8")
+            prop.unlink()
+            print("brief.md amended from arbitration proposal")
         print(f"== text2cad {'review' if args.review else 'repair'}: {slug} -> {out_dir}")
     else:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -495,11 +553,22 @@ def main() -> int:
         fails = (run_log["gate"].get("fails") or []) + lens_fails or ["unknown"]
         tier = fail_tier(fails)
         if spent[tier] >= TIER_BUDGET[tier]:
-            msg = (f"ESCALATE: {slug} — {tier} tier budget exhausted "
-                   f"({spent[tier]} repairs), still failing: {fails}")
+            arb = run_phase("arbitration", arbitration_prompt(slug, out_dir, fails),
+                            out_dir, 35, run_log)
+            last = (arb or "").strip().splitlines()[-1] if (arb or "").strip() else ""
+            if last.startswith("PROPOSE") and (out_dir / "brief_proposed.md").is_file():
+                msg = (f"ARBITRATION: {slug} — spec conflict after {spent[tier]} repairs: "
+                       f"{last[len('PROPOSE'):].strip()}\n"
+                       f"details: {out_dir}/arbitration.md\n"
+                       f"GO:  ./text2cad {slug} --amend\n"
+                       f"NO:  rm {out_dir}/brief_proposed.md")
+                run_log["arbitrated"] = {"tier": tier, "fails": fails, "proposal": last}
+            else:
+                msg = (f"ESCALATE: {slug} — {tier} tier budget exhausted "
+                       f"({spent[tier]} repairs), still failing: {fails}")
+                run_log["escalated"] = {"tier": tier, "fails": fails}
             print(msg)
             telegram_send_text(msg)
-            run_log["escalated"] = {"tier": tier, "fails": fails}
             break
         spent[tier] += 1
         attempt += 1

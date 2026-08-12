@@ -63,7 +63,11 @@ def main() -> int:
         return 0
     brief = (out_dir / "brief.md").read_text(encoding="utf-8")
     m = re.search(r"^#\s+(.+)$", brief, re.M)
-    title = (m.group(1).strip() if m else slug.replace("-", " ").title())[:120]
+    title = m.group(1).strip() if m else ""
+    if m and title.lower() == "title":  # briefs often start with a literal "# Title" label
+        rest = brief[m.end():].lstrip().splitlines()
+        title = next((l.strip() for l in rest if l.strip() and not l.startswith("#")), "")
+    title = (title or slug.replace("-", " ").title())[:120]
     paras = [p.strip() for p in brief.split("\n\n") if p.strip() and not p.startswith("#")]
     desc = re.sub(r"[*_`]", "", paras[0])[:500] if paras else title
     run = json.loads((out_dir / "run.json").read_text(encoding="utf-8")) \
