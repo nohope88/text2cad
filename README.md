@@ -68,6 +68,26 @@ fully automatic, one cycle per day.
   for human review. `blocks/` is human-approved by policy (SkillsBench 2026:
   human-curated skills +16.2pt vs ~0 LLM-authored).
 
+## Models
+
+Per-phase model via `{PHASE}_MODEL` in `.env` — e.g. `BUILD_MODEL`,
+`LENS-FIDELITY_MODEL` (phase name uppercased). Default: `claude-sonnet-5`
+direct; if the `PANDA_DEV_KEY` proxy is enabled, values must use the proxy's
+`anthropic,claude-opus-5` format instead.
+
+Current mix (since 2026-08-12) — Opus 5 where mistakes cascade, Sonnet 5
+default elsewhere:
+
+| Phase | Model | Why |
+|---|---|---|
+| discover, brief, build | Opus 5 | spec/code errors cascade downstream |
+| arbitration | Opus 5 | judgment call, no retry |
+| repair2, repair3 | Opus 5 | escalation ladder above Sonnet repair1 |
+| lens-fidelity | Opus 5 | on Sonnet it chronically exhausted 35 turns (2 runs, 2 timeouts) |
+| draft, other lenses, repair1 | Sonnet 5 (default) | cheap, re-gated / rescored anyway |
+
+Pre-mix `.env` kept at `.env.bak-pre-modelmix`.
+
 ## Ops (panda, UTC)
 
 | Cron | What |
