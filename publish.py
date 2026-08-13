@@ -113,7 +113,12 @@ def main() -> int:
     # Briefs may be a fenced ```design-brief JSON block with no prose at all —
     # drop fenced blocks first so raw JSON never becomes the description.
     prose = re.sub(r"```.*?```", "", brief, flags=re.S)
-    paras = [p.strip() for p in prose.split("\n\n") if p.strip() and not p.startswith("#")]
+    # Prefer the brief's own Concept section; repair sessions prepend revision
+    # blockquotes at the top, and those are build notes, not sales copy.
+    concept = re.search(r"^##\s*Concept\s*$(.*?)^##", prose, re.S | re.M)
+    body = concept.group(1) if concept else prose
+    paras = [p.strip() for p in body.split("\n\n")
+             if p.strip() and not p.startswith("#") and not p.lstrip().startswith(">")]
     desc = re.sub(r"[*_`]", "", paras[0])[:500] if paras else (prompt or title)[:500]
 
     thumbs = []
