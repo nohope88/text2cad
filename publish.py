@@ -51,14 +51,32 @@ def upload_project(out_dir: Path, slug: str, project_url: str) -> bool:
     if not stl.is_file():
         print("publish: no STL found — viewer stays empty until bridged")
         return False
-    r = subprocess.run(["/root/gcsvenv/bin/python", str(HERE / "gcs_upload_project.py"),
-                        str(stl), project_url],
-                       capture_output=True, text=True, timeout=300)
+    cmd = ["/root/gcsvenv/bin/python", str(HERE / "gcs_upload_project.py"),
+           str(stl), project_url]
+    fe_parts = out_dir / "fe_parts"
+    if fe_parts.is_dir() and any(fe_parts.glob("*.stl")):
+        cmd.append(str(fe_parts))
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     print(r.stdout.strip())
     if r.returncode != 0:
         print(f"publish: project upload FAILED (bridge later): {r.stderr[-300:]}")
         return False
     return True
+
+
+def apply_part_colors(slug: str) -> str:
+    """Key the design's part colors the way the FE resolves them (fe_colors.py:
+    FE group dump -> owner map -> thumbnail_jobs upsert + strict verify).
+    Best-effort; returns a Telegram warning line on failure, "" on success."""
+    r = subprocess.run(["/root/.local/bin/uv", "run", "--with", "trimesh",
+                        "--with", "numpy", "--with", "pymongo",
+                        "python", str(HERE / "fe_colors.py"), slug],
+                       capture_output=True, text=True, timeout=900, cwd=HERE)
+    tail = (r.stdout + r.stderr).strip().splitlines()
+    print("\n".join(tail[-4:]))
+    if r.returncode != 0:
+        return "\n\u26a0 part colors NOT keyed \u2014 ch\u1ea1y fe_colors.py tay."
+    return ""
 
 
 def telegram(text: str) -> None:
@@ -121,8 +139,10 @@ def main() -> int:
     (out_dir / "published.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     viewer = ""
     if info.get("project_url"):
-        viewer = "" if upload_project(out_dir, slug, info["project_url"]) \
-            else "\n⚠ project files NOT uploaded — viewer trống, cần chạy bridge."
+        if upload_project(out_dir, slug, info["project_url"]):
+            viewer = apply_part_colors(slug)
+        else:
+            viewer = "\n⚠ project files NOT uploaded — viewer trống, cần chạy bridge."
     telegram(f"📦 text2cad DRAFT imported: {title}\nid={info['id']} status={info['status']}{viewer}\n"
              f"Duyệt trong admindash → đổi status sang public để lên feed.")
     print(f"published as draft: {info}")
