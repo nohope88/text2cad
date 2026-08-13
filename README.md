@@ -39,8 +39,10 @@ assemblies preferred: the mechanism is the product.
  ┌─────────────────┐
  │ ③ DRAFT CAD     │──▶ hero.png + multi-view ──▶ 📱 Telegram (FYI;
  └────────┬────────┘    saved to reference/         --auto skips waiting)
-                        photo caption carries the pitch + scores; no hero.png
-                        falls back to a text proposal, never to silence
+                        hero_styled.png = i2i product shot of that same render
+                        (geometry preserved) + the raw render to check it
+                        against; caption carries the pitch + scores; no
+                        hero.png falls back to text, never to silence
           ▼
  ┌──────────────────────────────────────────────────┐   ┌─────────────┐
  │ ④ BUILD                                          │◀──│ blocks/     │
