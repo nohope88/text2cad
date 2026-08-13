@@ -170,11 +170,12 @@ The cad tool: `{CAD_CMD}`
  "directory — read it first and IMPROVE it to final quality (keep its approved "
  "silhouette; fix geometry rigor, printability, dimensions) rather than starting "
  "from scratch." if (out_dir / "main.py").is_file() else ""}
-{f"QUALITY TARGET — `{out_dir}/concept.png` is the concept the human approved "
- "at DISCOVER, and the draft was built toward it. It is the bar for finish and "
- "character, NOT a geometry source: where it and the reference renders differ "
- "on shape, the renders win, because they are what was actually approved as a "
- "design. Use it to decide how refined this has to look."
+{f"CONCEPT — `{out_dir}/concept.png` is what the human approved, and it is the "
+ "target for silhouette, part count and overall character: the fidelity lens "
+ "scores you against it. It is a generated photograph, so take SHAPE from it "
+ "and nothing else — every explicit number comes from brief.md, and the "
+ "printability non-negotiables below outrank both. Build the printable version "
+ "of that object, not a shell that photographs like it."
  if (out_dir / "concept.png").is_file() else ""}
 {"VISUAL CONTRACT — the human approved this design from the renders in "
  f"`{out_dir}/reference/`. Read EVERY image there BEFORE writing code. After each "
@@ -182,7 +183,7 @@ The cad tool: `{CAD_CMD}`
  "against reference/ (same camera angles): silhouette, feature presence, and "
  "proportions must MATCH the approved design. Cleaner detail is welcome; "
  "silhouette drift is failure — iterate until they match."
- if (out_dir / "reference").is_dir() and list((out_dir / "reference").glob("*.png")) else ""}
+ if [p for p in (out_dir / "reference").glob("*.png") if p.name != "concept.png"] else ""}
 OUTPUT — build the project in `{out_dir}`:
 - params.py, main.py (CadQuery) implementing every feature in the brief
 - assembled exports: `{slug}.step` and `{slug}.stl` (+ .step.json sidecar),
@@ -224,7 +225,12 @@ LENSES = {
                      "orientation. Use gate.json numbers and the section renders."),
     "fidelity": ("Judge ONLY fidelity to the approved design: compare current renders "
                  "view-by-view against brief.md features/dimensions and, if present, "
-                 "the images in `reference/`. Silhouette drift or a missing feature = FAIL."),
+                 "the images in `reference/`. Silhouette drift or a missing feature = FAIL. "
+                 "`reference/concept.png`, if present, is the approved LOOK — judge "
+                 "silhouette, part count and feature presence against it, and score "
+                 "NOTHING about material, colour, lighting or finish: it is a "
+                 "photograph and the renders are flat-shaded CAD, so that gap is the "
+                 "renderer, not the model."),
     "sellability": ("Judge ONLY first-sight desire: would a stranger stop scrolling and "
                     "want this? Striking silhouette, visible mechanism, something they "
                     "have not seen before. Hard to categorise is NOT a defect — generic, "
@@ -816,6 +822,13 @@ def repair_prompt(slug: str, out_dir: Path, fails: list) -> str:
 
 You are a REPAIR session of a text-to-CAD pipeline, in `{out_dir}`. Previous
 sessions left this part FAILING its printability gate: {fails}.{lessons_block()}
+{"""
+LOOK AT `reference/concept.png` BEFORE FIXING — it is the design the human
+approved and what the fidelity lens scores against, so a fidelity fail is a
+question about that image, not about prose. Take silhouette, part count and
+feature presence from it; take every number from brief.md; never let it argue
+you past the printability non-negotiables.
+""" if (out_dir / "reference" / "concept.png").is_file() else ""}
 
 0. Read `panel_history.json` (every prior panel verdict, oldest -> newest) and
    the current `review_*.md` files FIRST. Treat prior verdicts as a REGRESSION
@@ -1017,6 +1030,9 @@ def main() -> int:
         ref.mkdir(exist_ok=True)
         for png in rd.glob("*.png"):
             (ref / png.name).write_bytes(png.read_bytes())
+        concept = out_dir / "concept.png"
+        if concept.is_file():  # the approved look, judged alongside the renders
+            (ref / "concept.png").write_bytes(concept.read_bytes())
         print(f"reference set: {len(list(ref.glob('*.png')))} approved renders for the build phase")
         print(telegram_send_proposal(out_dir, slug))
         (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
