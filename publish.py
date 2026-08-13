@@ -122,11 +122,15 @@ def main() -> int:
     desc = re.sub(r"[*_`]", "", paras[0])[:500] if paras else (prompt or title)[:500]
 
     thumbs = []
-    for name in ("hero.png", "parts.png"):
+    for name, src in (("hero.png", "_assembled.png"), ("parts.png", "_qa.png")):
         p = out_dir / name
-        if not p.is_file():  # fall back to review renders
-            alt = out_dir / f"{slug}_review" / ("_assembled.png" if name == "hero.png" else "_qa.png")
-            p = alt if alt.is_file() else p
+        # hero.png/parts.png are frozen at DRAFT time — they are the approved
+        # visual contract, and BUILD spends hours refining the geometry after
+        # that. The storefront has to show what actually shipped, so prefer the
+        # newer render BUILD left in the review dir.
+        alt = out_dir / f"{slug}_review" / src
+        if alt.is_file() and (not p.is_file() or alt.stat().st_mtime > p.stat().st_mtime):
+            p = alt
         if p.is_file():
             thumbs.append(upload(p, token))
     if not thumbs:
