@@ -29,6 +29,9 @@ assemblies preferred: the mechanism is the product.
  └────────┬──────────────────────┘         │            │
           │──▶ 📱 Telegram: winner + medians + why it won
           │       (text, ~7min in — does not wait on renders)
+          │──▶ concept.png — Seedream t2i from the panel's own PROMPT line,
+          │       ~11s / ~$0.04. A concept, NOT the design: it shows form and
+          │       use context, never the mechanism. Never enters reference/.
           ▼                               ▼              ▼
  ┌──────────────────────────────────────────────────┐
  │ ② BRIEF                                          │
