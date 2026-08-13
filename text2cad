@@ -731,6 +731,25 @@ def telegram_send_proposal(out_dir: Path, slug: str) -> str:
     return "telegram: proposal sent"
 
 
+def concept_preview(out_dir: Path, slug: str) -> None:
+    """A picture of the winner before any geometry exists — DISCOVER picks from
+    text alone, so this is the cheapest place in the cycle to say "not that".
+
+    Best-effort by design: an image API outage must never stop a build. The
+    result is a concept, NOT the design — it never enters reference/, and BUILD
+    keeps chasing the CAD renders.
+    """
+    try:
+        r = subprocess.run([sys.executable, str(HERE / "concept_image.py"), str(out_dir)],
+                           capture_output=True, text=True, timeout=300)
+        print((r.stdout.strip() or r.stderr.strip()[-200:]), flush=True)
+        img = out_dir / "concept.png"
+        if img.is_file():
+            telegram_send_photo(img, f"{slug} — concept (AI image, not the CAD)")
+    except Exception as e:
+        print(f"concept image skipped: {e}", flush=True)
+
+
 def telegram_send_photo(img: Path, caption: str) -> None:
     tok = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat = os.environ.get("TELEGRAM_CHAT_DM", "").strip()
@@ -937,6 +956,7 @@ def main() -> int:
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "discover.md").write_text(text, encoding="utf-8")
         telegram_send_text(discover_preview(text))
+        concept_preview(out_dir, slug)
         panel_dir = out_dir / "panel"
         panel_dir.mkdir(exist_ok=True)
         for rec in sorted(tmp.glob("cand_*.md")) + sorted(tmp.glob("judge_*.md")):
