@@ -96,6 +96,28 @@ Pre-mix `.env` kept at `.env.bak-pre-modelmix`.
 | `0 1 * * 0` | `improve.py` — weekly self-improvement session |
 | `0 4 * * *` | `watchdog.sh` — dead-man alert if heartbeat >28h stale |
 
+## Multi-part colors (publish lane)
+
+A multi-part design ships per-part STLs in `out/<slug>/fe_parts/` (named
+`assembled_<part>.stl`) and its colorway in `out/<slug>/part_colors.json`
+(`{"assembled_foo.stl": "#hex"}` — authored by the design phase). `publish.py`
+then does the rest automatically:
+
+1. `gcs_upload_project.py` uploads assembled.stl + the fe_parts siblings +
+   `_tree.json` to the history CDN prefix.
+2. `fe_colors.py` keys the colors the way the FE actually resolves them:
+   `render_three43_fe.mjs FE_DUMP_GROUPS=1` dumps the FE part numbering
+   (contact-face slivers TAKE part numbers — ecm-website known bug, so plain
+   filename keys miskey any fragmented assembly), each group is owned to its
+   part geometrically, and the result is upserted onto the history's
+   `thumbnail_jobs` doc (`assembly_parts` + `part_colors`), then re-verified
+   with `FE_STRICT=1` (exit 4 = a real part would still render white; Telegram
+   warns). Single-mesh designs skip cleanly. Manual run:
+   `/root/.local/bin/uv run --with trimesh --with numpy --with pymongo python fe_colors.py <slug> [--dry-run]`
+
+No fe_parts dir -> viewer shows the assembled mesh uncolored (publish-seed
+white), same as before.
+
 ## Setup
 
 ```bash
