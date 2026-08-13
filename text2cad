@@ -796,6 +796,10 @@ def main() -> int:
         out_dir = HERE / "out" / slug
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "discover.md").write_text(text, encoding="utf-8")
+        panel_dir = out_dir / "panel"
+        panel_dir.mkdir(exist_ok=True)
+        for rec in sorted(tmp.glob("cand_*.md")) + sorted(tmp.glob("judge_*.md")):
+            (panel_dir / rec.name).write_bytes(rec.read_bytes())
         run_log["slug"] = slug
         product_prompt = p.group(1).strip() if p else slug.replace("-", " ")
         run_log["prompt"] = product_prompt
