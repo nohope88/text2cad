@@ -315,7 +315,8 @@ def run_panel(slug: str, out_dir: Path, run_log: dict, lenses=None) -> dict:
     return results
 
 
-TASTE_DIALS = (("NOVELTY", "8"), ("MECHANISM", "7"), ("ORNAMENT", "4"))
+TASTE_DIALS = (("NOVELTY", "8"), ("MECHANISM", "7"), ("ORNAMENT", "4"),
+               ("PARTS", "6-14"), ("CRAFT", "6"))
 
 
 def taste_block() -> str:
@@ -380,6 +381,7 @@ def blacklist_block(found: list) -> str:
 
 
 def propose_prompt(lane: str, out_dir: Path, trend_files: list, found: list = ()) -> str:
+    parts = os.environ.get("PARTS", "6-14")
     return f"""{HEADLESS_WARNING}
 
 You are ONE of three independent PROPOSE agents in a text-to-CAD product
@@ -402,10 +404,16 @@ needs your lane explored to its edge, not three overlapping safe bets.
 PROCESS:
 1. Skim the trend input for recurring themes with mass attention.
 2. Propose exactly TWO products in your lane, each riding a theme. Every
-   candidate is an assembly of 2-6 parts built AROUND a named mechanism from
+   candidate is an assembly of {parts} parts built AROUND a named mechanism from
    the taste vocabulary (or one you name yourself and can describe in a
-   sentence). Hard constraints: every part fits 160x160x180mm, and no
-   copyrighted or trademarked IP.
+   sentence). AIM HIGH IN THAT RANGE: the product should read as a real piece
+   of engineering — many distinct components, each visibly doing a job, the way
+   a mechanical watch movement or a film camera does. A clever idea executed as
+   three plain blocks is a worse product than the same idea executed as a dozen
+   articulated components, and the pipeline is being asked for the second one.
+   What is still banned is decoration: a part that could be deleted without the
+   object losing a function was never a part. Hard constraints: every part fits
+   160x160x180mm, and no copyrighted or trademarked IP.
 3. SEARCH before you commit (WebSearch): look for each candidate on Amazon,
    Etsy, Printables, Thingiverse and MakerWorld the way a shopper would, in the
    words a shopper would use. If you find the same product — same mechanism
@@ -420,7 +428,7 @@ no prose outside them.
 CANDIDATE: <kebab-case-slug>
 PITCH: one sentence — what it is and what it does
 MECHANISM: the named move it is built around
-PARTS: <number 2-6>
+PARTS: <number, in the {parts} range>
 NEAREST: the closest thing you found for sale — URL, then why yours is not it
 WHY-NOBODY-HAS-THIS: one sentence
 PROMPT: one-line product prompt for the brief phase
@@ -451,19 +459,25 @@ listing you actually opened; `EXISTS <slug> no none` otherwise. One judge findin
 a listing kills that candidate, so do not guess in either direction — a URL is
 the only thing that counts as a find.
 
-THEN score EVERY candidate 0-10 on three axes:
+THEN score EVERY candidate 0-10 on four axes:
 - novelty — distance from the nearest thing that DOES exist. 10 = nothing in the
   neighbourhood; 5 = clearly adjacent to something on sale; 0 = a restyle of it.
 - desire — 10 = a stranger wants it before they can explain why. Score WANTING,
   not naming. Hard to classify is not a defect; safe and generic is.
 - buildable — 10 = modelable in CadQuery and printable unattended on an FDM
-  machine. Below 4 means genuinely impossible, not merely difficult.
+  machine. Below 4 means genuinely impossible, not merely difficult. Part COUNT
+  is not a buildability problem: twelve parts that each print fine is a 9, and
+  scoring it down for being ambitious is the error this axis keeps making.
+- craft — component density and mechanical richness. 10 = an assembly you could
+  stare at, many distinct parts each visibly doing a job, like a watch movement
+  or a film camera; 5 = a sound mechanism in a plain housing; 1 = a simple solid
+  with one moving piece. Score what is THERE, not what could be added.
 
 OUTPUT — write `{out_dir}/judge_{idx}.md`: one line per candidate reading exactly
 `EXISTS <slug> yes <url>` or `EXISTS <slug> no none`, then one line per candidate
-reading exactly `SCORE <slug> <novelty> <desire> <buildable>` (integers, spaces,
-nothing else on those lines), then one sentence per candidate explaining its
-LOWEST score or the listing you found.
+reading exactly `SCORE <slug> <novelty> <desire> <buildable> <craft>` (integers,
+spaces, nothing else on those lines), then one sentence per candidate explaining
+its LOWEST score or the listing you found.
 
 Reply with ONE line: the slug you would ship."""
 
@@ -499,10 +513,14 @@ def parse_scores(out_dir: Path) -> dict:
     scores = {}
     for f in sorted(out_dir.glob("judge_*.md")):
         for ln in f.read_text(encoding="utf-8", errors="ignore").splitlines():
-            m = re.match(r"SCORE\s+([a-z0-9-]+)\s+(\d+)\s+(\d+)\s+(\d+)$", ln.strip(), re.I)
+            # craft is optional so a judge that ignores the 4th axis costs one
+            # score, not the whole day: a panel with nothing rankable aborts
+            m = re.match(r"SCORE\s+([a-z0-9-]+)\s+(\d+)\s+(\d+)\s+(\d+)(?:\s+(\d+))?$",
+                         ln.strip(), re.I)
             if m:
                 scores.setdefault(m.group(1).lower(), []).append(
-                    tuple(int(m.group(i)) for i in (2, 3, 4)))
+                    tuple(int(m.group(i)) for i in (2, 3, 4))
+                    + (int(m.group(5)) if m.group(5) else 5,))
     return scores
 
 
@@ -534,36 +552,39 @@ def pick_winner(out_dir: Path) -> str:
         votes = scores.get(slug)
         if not votes or slug in found:
             continue
-        nov, des, bui = (statistics.median([v[i] for v in votes]) for i in range(3))
-        ranked.append({"slug": slug, "c": c, "n": nov, "d": des, "b": bui,
-                       "sum": nov + des, "votes": len(votes)})
+        nov, des, bui, cra = (statistics.median([v[i] for v in votes]) for i in range(4))
+        ranked.append({"slug": slug, "c": c, "n": nov, "d": des, "b": bui, "k": cra,
+                       "sum": nov + des + cra, "votes": len(votes)})
     if not ranked:
         if cands and len(found) >= len([c for c in cands if c in scores]) > 0:
             return ""  # everything is already for sale — caller re-proposes
         raise SystemExit(f"ABORT: {len(cands)} candidates, {len(scores)} scored — "
                          f"panel produced nothing rankable")
+    craft_min = int(os.environ.get("CRAFT", "6"))
     ranked.sort(key=lambda r: (r["sum"], r["n"]), reverse=True)
-    eligible = [r for r in ranked if r["n"] >= 7 and r["b"] >= 4]
+    eligible = [r for r in ranked
+                if r["n"] >= 7 and r["b"] >= 4 and r["k"] >= craft_min]
     win = (eligible or ranked)[0]
 
     rows = "\n".join(
         f"| {r['slug']} | {r['c'].get('lane', '?')} | {r['c'].get('PARTS', '?')} | "
-        f"{r['n']:g} | {r['d']:g} | {r['b']:g} | {r['votes']} | "
+        f"{r['n']:g} | {r['d']:g} | {r['b']:g} | {r['k']:g} | {r['votes']} | "
         f"{r['c'].get('MECHANISM', '')} |" for r in ranked)
     if found:
         rows += "\n" + "\n".join(
-            f"| ~~{slug}~~ | — | — | — | — | — | — | KILLED, already for sale: {url} |"
+            f"| ~~{slug}~~ | — | — | — | — | — | — | — | KILLED, already for sale: {url} |"
             for slug, url in found.items())
-    warn = "" if eligible else ("\n\n⚠ LOW-NOVELTY ROUND: no candidate cleared "
-                                "novelty>=7 — shipping the best of a weak field.")
+    warn = "" if eligible else ("\n\n⚠ WEAK ROUND: nothing cleared novelty>=7, "
+                                f"buildable>=4 and craft>={craft_min} — shipping "
+                                "the best of a weak field.")
     text = f"""# Discover panel — {len(cands)} candidates, {N_JUDGES} judges
 
-| candidate | lane | parts | novelty | desire | buildable | votes | mechanism |
-|---|---|---|---|---|---|---|---|
+| candidate | lane | parts | novelty | desire | buildable | craft | votes | mechanism |
+|---|---|---|---|---|---|---|---|---|
 {rows}
 
 Scores are medians over independent judges; the winner is the highest
-novelty+desire clearing novelty>=7 and buildable>=4.{warn}
+novelty+desire+craft clearing novelty>=7, buildable>=4 and craft>={craft_min}.{warn}
 
 WINNER: {win['slug']}
 
@@ -574,8 +595,8 @@ Why nobody has this: {win['c'].get('WHY-NOBODY-HAS-THIS', '')}
 PROMPT: {win['c'].get('PROMPT') or win['c'].get('PITCH', win['slug'].replace('-', ' '))}
 """
     (out_dir / "discover.md").write_text(text, encoding="utf-8")
-    print(f"panel: {len(ranked)} ranked, winner {win['slug']} "
-          f"(novelty {win['n']:g}, desire {win['d']:g}, buildable {win['b']:g})", flush=True)
+    print(f"panel: {len(ranked)} ranked, winner {win['slug']} (novelty {win['n']:g}, "
+          f"desire {win['d']:g}, buildable {win['b']:g}, craft {win['k']:g})", flush=True)
     return text
 
 
@@ -687,9 +708,10 @@ def discover_digest(text: str) -> dict:
     row = re.search(rf"^\|\s*{re.escape(d['slug'])}\s*\|(.+)$", text, re.M)
     if row:
         f = [c.strip() for c in row.group(1).split("|")]
-        if len(f) >= 6:
-            d["scores"] = (f"novelty {f[2]} / desire {f[3]} / buildable {f[4]} "
-                           f"— {f[5]} judges, {f[0]} lane, {f[1].split()[0]} parts")
+        if len(f) >= 7:
+            d["scores"] = (f"novelty {f[2]} / desire {f[3]} / buildable {f[4]} / "
+                           f"craft {f[5]} — {f[6]} judges, {f[0]} lane, "
+                           f"{f[1].split()[0]} parts")
     body = text.split(f"WINNER: {d['slug']}", 1)[-1].split("\nPROMPT:", 1)[0]
     lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
     d["pitch"] = lines[0] if lines else ""
