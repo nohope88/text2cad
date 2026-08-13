@@ -170,6 +170,12 @@ The cad tool: `{CAD_CMD}`
  "directory — read it first and IMPROVE it to final quality (keep its approved "
  "silhouette; fix geometry rigor, printability, dimensions) rather than starting "
  "from scratch." if (out_dir / "main.py").is_file() else ""}
+{f"QUALITY TARGET — `{out_dir}/concept.png` is the concept the human approved "
+ "at DISCOVER, and the draft was built toward it. It is the bar for finish and "
+ "character, NOT a geometry source: where it and the reference renders differ "
+ "on shape, the renders win, because they are what was actually approved as a "
+ "design. Use it to decide how refined this has to look."
+ if (out_dir / "concept.png").is_file() else ""}
 {"VISUAL CONTRACT — the human approved this design from the renders in "
  f"`{out_dir}/reference/`. Read EVERY image there BEFORE writing code. After each "
  "export, re-render with the review script and compare your renders view-by-view "
@@ -623,6 +629,16 @@ is a fast, visually honest draft, not a perfect part.{lessons_block()}
 INPUT: `{out_dir}/brief.md` (the spec), `{HERE}/blocks/BLOCKS.md` (COMPOSE FROM
 these verified golden blocks first — hand-build only what they don't cover),
 and `{CADCODE}/SKILL.md` (skim: helpers and render script usage).
+{"""
+VISUAL TARGET — `concept.png` in that directory is the concept the human
+approved, and it sets the quality bar for this draft. LOOK AT IT before writing
+any code, and match its silhouette, proportions, part breakdown and general
+character. Two rules where it disagrees with the brief: on any NUMBER the brief
+wins, because it is the spec; on LOOK the concept wins. It is a generated
+photograph, not a manufacturable model, so never copy from it anything that
+breaks the printability non-negotiables — build the printable version of that
+object.
+""" if (out_dir / "concept.png").is_file() else ""}
 
 Build a DRAFT project in `{out_dir}` (params.py, main.py, export `{slug}.step` +
 `{slug}.stl`): every part from the brief's `## Parts` table, modelled in its
@@ -729,6 +745,27 @@ def telegram_send_proposal(out_dir: Path, slug: str) -> str:
     if d["why"]:
         telegram_send_text(f"{slug} — why the panel picked it:\n\n{d['why']}"[:4000])
     return "telegram: proposal sent"
+
+
+def concept_target(out_dir: Path) -> Path | None:
+    """Render the winner as a concept photo and send it for review.
+
+    DISCOVER picks from text, so this is the first thing a human can judge
+    quality from — 45min and $8.50 before DRAFT would have produced one. The
+    approved image is not a prediction of the build; it is the target the build
+    is held to (draft_prompt/build_prompt read it).
+
+    Best-effort: the gateway going dark must not stop a cycle.
+    """
+    try:
+        r = subprocess.run([sys.executable, str(HERE / "concept_image.py"),
+                            str(out_dir), "--telegram"],
+                           capture_output=True, text=True, timeout=400)
+        print((r.stdout.strip() or r.stderr.strip()[-300:]), flush=True)
+    except Exception as e:
+        print(f"concept image skipped: {e}", flush=True)
+    img = out_dir / "concept.png"
+    return img if img.is_file() else None
 
 
 def telegram_send_photo(img: Path, caption: str) -> None:
@@ -937,6 +974,7 @@ def main() -> int:
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "discover.md").write_text(text, encoding="utf-8")
         telegram_send_text(discover_preview(text))
+        concept_target(out_dir)
         panel_dir = out_dir / "panel"
         panel_dir.mkdir(exist_ok=True)
         for rec in sorted(tmp.glob("cand_*.md")) + sorted(tmp.glob("judge_*.md")):
