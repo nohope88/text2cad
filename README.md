@@ -1,8 +1,9 @@
 # text2cad
 
 Autonomous trend→product pipeline: scans X/HN trends, picks a 3D-printable
-product people would impulse-buy, and produces print-ready `.step`/`.stl` —
-fully automatic, one cycle per day.
+product that does not exist yet — scored on novelty and desire, preferring
+multi-part assemblies — and produces print-ready `.step`/`.stl` per part, fully
+automatic, one cycle per day.
 
 ```
  INPUT ────────────────────────────────────────────────────────────────
@@ -11,14 +12,15 @@ fully automatic, one cycle per day.
         ▼                                        │
  ┌─────────────────┐   discover_lessons.md      │
  │ ① DISCOVER      │◀──(taste learned from      │
- │ 5 ideas → score │    human rejects)          │
- │ top-3 → WINNER  │                            │
+ │ 5 ideas, scored │    human rejects)          │
+ │ novelty/desire/ │  ⚠ trend input ONLY —      │
+ │ buildable       │    never lessons.md        │
  └────────┬────────┘                            │
           ▼                                     ▼
  ┌──────────────────────────────────────────────────┐
  │ ② BRIEF                                          │
- │ 🔍 web research → must-have checklist            │
- │ spec in mm + ## Interfaces (device, cable, hand) │
+ │ 🔍 web research → ## Not this (3 nearest, differ)│
+ │ spec in mm + ## Parts (color, mates) + ## Interf │
  └────────┬─────────────────────────────────────────┘
           ▼
  ┌─────────────────┐
@@ -27,14 +29,16 @@ fully automatic, one cycle per day.
           ▼
  ┌──────────────────────────────────────────────────┐   ┌─────────────┐
  │ ④ BUILD                                          │◀──│ blocks/     │
- │ compose from GOLDEN BLOCKS (human-approved)      │   │ testbench-  │
+ │ golden blocks where they fit (never design-led)  │   │ testbench-  │
  │ visual contract: match reference/ renders        │   │ verified    │
- │ writes fit_checks.py from Interfaces             │   └─────────────┘
+ │ fe_parts/*.stl (print pose) + part_colors.json   │   └─────────────┘
+ │ writes fit_checks.py from Interfaces + Parts     │
  └────────┬─────────────────────────────────────────┘
           ▼                                  lessons.md
  ┌──────────────────────────────────┐   (hard rules, injected
- │ ⑤ GATE  (no LLM)                 │    into every prompt)
- │ trimesh: watertight? 1 body?     │        ▲
+ │ ⑤ GATE  (no LLM)                 │    into BUILD + REPAIR
+ │ per PART: watertight? 1 body?    │     only — see DISCOVER)
+ │ overhang, bridge, 160mm footprint│        ▲
  │ OrcaSlicer real slice + print est│        │ repeated lesson MUST
  │ lesson-linter on code            │        │ graduate to code
  │ runs fit_checks.py               │        │
@@ -52,8 +56,9 @@ fully automatic, one cycle per day.
  └────────┬─────────────────────────┘
           ▼ all green
  OUTPUT ──────────────────────────────────────────────────────────────
-   out/<slug>/  part.step + part.stl + renders + review notes
-                + run.json (cost/turns per phase)
+   out/<slug>/  <slug>.step + <slug>.stl (assembled) + renders
+                + fe_parts/*.stl + part_colors.json (viewer paints these)
+                + review notes + run.json (cost/turns per phase)
 ```
 
 ## Loops & self-improvement
