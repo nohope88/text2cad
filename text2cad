@@ -721,13 +721,7 @@ def telegram_send_proposal(out_dir: Path, slug: str) -> str:
     if not hero.is_file():  # a failed DRAFT must not swallow the proposal
         telegram_send_text(f"{cap}\n\n(no renders — DRAFT produced no hero.png)")
         return "telegram: proposal sent as text (no renders)"
-    # the styled shot is for judging desire, the raw render is the geometric
-    # truth behind it — send both so a restyle artifact cannot pass unnoticed
-    styled = out_dir / "hero_styled.png"
-    shots = ([(styled, cap), (hero, f"{slug}: CAD render — hình học thật để đối chiếu")]
-             if styled.is_file() else [(hero, cap)])
-    shots.append((parts, f"{slug}: parts breakdown"))
-    for img, c in shots:
+    for img, c in ((hero, cap), (parts, f"{slug}: parts breakdown")):
         if img.is_file():
             subprocess.run(["curl", "-s", f"https://api.telegram.org/bot{tok}/sendPhoto",
                             "-F", f"chat_id={chat}", "-F", f"photo=@{img}", "-F", f"caption={c}"],
@@ -735,30 +729,6 @@ def telegram_send_proposal(out_dir: Path, slug: str) -> str:
     if d["why"]:
         telegram_send_text(f"{slug} — why the panel picked it:\n\n{d['why']}"[:4000])
     return "telegram: proposal sent"
-
-
-def styled_hero(out_dir: Path) -> Path | None:
-    """A product shot built FROM the CAD render, not from a description.
-
-    The approval gate needs a picture of this design; text-to-image drew the
-    nearest familiar object instead, which is the one thing an approval photo
-    must never do. i2i keeps the silhouette, features and camera, and reads the
-    viewport's flat shading and z-fighting as the artifacts they are.
-
-    Never written into reference/ — BUILD matches the raw renders.
-    """
-    src = out_dir / "hero.png"
-    if not src.is_file():
-        return None
-    dst = out_dir / "hero_styled.png"
-    try:
-        r = subprocess.run([sys.executable, str(HERE / "style_image.py"),
-                            str(src), str(dst)],
-                           capture_output=True, text=True, timeout=300)
-        print((r.stdout.strip() or r.stderr.strip()[-200:]), flush=True)
-    except Exception as e:
-        print(f"styled hero skipped: {e}", flush=True)
-    return dst if dst.is_file() else None
 
 
 def telegram_send_photo(img: Path, caption: str) -> None:
@@ -988,7 +958,6 @@ def main() -> int:
         for png in rd.glob("*.png"):
             (ref / png.name).write_bytes(png.read_bytes())
         print(f"reference set: {len(list(ref.glob('*.png')))} approved renders for the build phase")
-        styled_hero(out_dir)
         print(telegram_send_proposal(out_dir, slug))
         (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
         total = sum(e.get("cost_usd") or 0 for e in run_log.values() if isinstance(e, dict) and "cost_usd" in e)
