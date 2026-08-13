@@ -208,6 +208,17 @@ YOUR LENS — {lens.upper()}: {LENSES[lens]}
 
 Read `brief.md`, `gate.json`, and EVERY render in `{slug}_review/` (re-render
 with `{REVIEW_CMD}` if none exist). Do NOT edit part files — verdict only.
+
+MEASURE BEFORE YOU CLAIM: renders lie (z-fighting, camera, mplot3d artifacts).
+Any geometric or dimensional finding (missing feature, wrong size/count/
+percentage, breached wall) must be verified against the actual geometry —
+trimesh on the STL, or the numbers in `params.py`/`main.py` — and the finding
+must state the measured number and how you measured it. A claim your own
+measurement contradicts must not be written. Visual-only findings are allowed
+solely for cosmetic issues (render artifacts, colors, surface look).
+If `arbitration.md` exists, read it FIRST: claims it refuted with measurements
+must not be re-raised unless your own new measurement disagrees — a prior
+panel burned repair rounds chasing two measurably-false findings.
 Write `review_{lens}.md`: its FIRST line must be `Verdict: PASS <score>/10`
 or `Verdict: FAIL <score>/10 <one-sentence reason>` — <score> grades how close
 the part is to passing YOUR lens (10 = flawless, 8 = minimum pass, one decimal
@@ -258,7 +269,7 @@ def run_panel(slug: str, out_dir: Path, run_log: dict, lenses=None) -> dict:
     for lens in (lenses or LENSES):
         f = out_dir / f"review_{lens}.md"
         mtime_before = f.stat().st_mtime if f.is_file() else None
-        r = run_phase(f"lens-{lens}", lens_prompt(slug, out_dir, lens), out_dir, 35, run_log, timeout_s=2400)
+        r = run_phase(f"lens-{lens}", lens_prompt(slug, out_dir, lens), out_dir, 45, run_log, timeout_s=2400)
         results[lens] = lens_verdict(out_dir, lens, r, mtime_before)
     hist_f = out_dir / "panel_history.json"
     try:
@@ -307,7 +318,7 @@ PROCESS:
    on a common category (pen holder, phone stand, organizer) is the weakest
    form of idea. Print-in-place mechanisms and supports ARE allowed when the
    payoff justifies them (one print job — no loose multi-part assemblies).
-   Hard constraints (only these): TOTAL bbox fits 160x160x180mm (the slice-gate A1 mini rejects wider footprints — verified 2026-08-12), NO copyrighted/
+   Hard constraints (only these): fits 180x180x180mm, NO copyrighted/
    trademarked IP (no movie/game/brand replicas).
 3. Score each 0-10 on TWO axes only: printability (10 = prints reliably on a
    stock FDM printer at 0.2mm) and usability (10 = solves a real recurring
@@ -412,7 +423,11 @@ sessions left this part FAILING its printability gate: {fails}.{lessons_block()}
    SUITE: past repair rounds oscillated — each fixed its named fail while
    quietly re-breaking a feature an earlier round had already accepted. A fix
    that re-breaks a previously-PASSed lens or re-opens an old finding is worse
-   than no fix.
+   than no fix. If `arbitration.md` exists, read it too: it may prove some
+   review claims measurably FALSE (a prior arbitration did) and may name the
+   exact fix technique for the real ones — do not spend turns "fixing" a
+   refuted claim; verify each claimed defect against the geometry before
+   changing code.
 1. Read `gate.json`, `params.py`, `main.py`, `{HERE}/blocks/BLOCKS.md` (prefer
    swapping broken hand-built geometry for a verified golden block), and
    `{CADCODE}/SKILL.md` (the sections on booleans/validation). Diagnose the
@@ -706,6 +721,13 @@ def main() -> int:
             run_log["panel"] = run_panel(slug, out_dir, run_log, lenses=failed)
             lens_fails = [f"lens:{k} {v}" for k, v in run_log["panel"].items()
                           if not v.startswith("PASS")]
+            if not lens_fails and len(failed) < len(LENSES):
+                # every failing lens now passes — confirm the lenses this round
+                # skipped didn't regress before declaring the panel clean
+                confirm = [k for k in LENSES if k not in failed]
+                run_log["panel"] = run_panel(slug, out_dir, run_log, lenses=confirm)
+                lens_fails = [f"lens:{k} {v}" for k, v in run_log["panel"].items()
+                              if not v.startswith("PASS")]
         hero = hero_render(slug, out_dir)
         if hero:
             panel = run_log.get("panel") or {}
