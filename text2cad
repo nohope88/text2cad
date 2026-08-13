@@ -657,19 +657,77 @@ def telegram_send_text(text: str) -> None:
                        capture_output=True, timeout=30)
 
 
+def discover_digest(text: str) -> dict:
+    """Winner, medians and rationale out of a discover.md.
+
+    The panel's reasons are the whole point of a preview — deciding GO from a
+    slug and a render alone is deciding blind.
+    """
+    d = {"slug": "", "scores": "", "pitch": "", "why": ""}
+    m = re.search(r"^WINNER:\s*([a-z0-9-]+)", text, re.M)
+    if not m:
+        return d
+    d["slug"] = m.group(1)
+    row = re.search(rf"^\|\s*{re.escape(d['slug'])}\s*\|(.+)$", text, re.M)
+    if row:
+        f = [c.strip() for c in row.group(1).split("|")]
+        if len(f) >= 6:
+            d["scores"] = (f"novelty {f[2]} / desire {f[3]} / buildable {f[4]} "
+                           f"— {f[5]} judges, {f[0]} lane, {f[1].split()[0]} parts")
+    body = text.split(f"WINNER: {d['slug']}", 1)[-1].split("\nPROMPT:", 1)[0]
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+    d["pitch"] = lines[0] if lines else ""
+    d["why"] = "\n".join(lines[1:])
+    return d
+
+
+def clip(s: str, n: int) -> str:
+    """Clip on a word boundary — a caption cut mid-word reads as a bug."""
+    if len(s) <= n:
+        return s
+    return s[:n].rsplit(" ", 1)[0].rstrip(" ,;:—-") + "…"
+
+
+def join_block(*parts: str) -> str:
+    """Blank line between the parts that exist, none for the ones that do not."""
+    return "\n\n".join(p for p in parts if p)
+
+
+def discover_preview(text: str) -> str:
+    """The verdict, the moment the panel has one — DRAFT renders are 30min away."""
+    d = discover_digest(text)
+    if not d["slug"]:
+        return ""
+    head = f"text2cad DISCOVER — winner: {d['slug']}"
+    if d["scores"]:
+        head += "\n" + d["scores"]
+    return join_block(head, d["pitch"], d["why"])[:4000]
+
+
 def telegram_send_proposal(out_dir: Path, slug: str) -> str:
     tok = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat = os.environ.get("TELEGRAM_CHAT_DM", "").strip()
-    hero = out_dir / "hero.png"
-    parts = out_dir / "parts.png"
-    if not (tok and chat and hero.is_file()):
-        return "telegram: skipped (no creds or no renders)"
-    cap = f"text2cad PROPOSAL: {slug}\nGO:  ./text2cad {slug} --go\nNO:  ./text2cad {slug} --reject 'reason'"
-    for img, c in ((hero, cap), (parts, "parts breakdown")):
+    if not (tok and chat):
+        return "telegram: skipped (no creds)"
+    hero, parts = out_dir / "hero.png", out_dir / "parts.png"
+    dm = out_dir / "discover.md"
+    d = discover_digest(dm.read_text(encoding="utf-8")) if dm.is_file() else discover_digest("")
+    go = f"GO:  ./text2cad {slug} --go\nNO:  ./text2cad {slug} --reject 'reason'"
+    # sendPhoto caps captions at 1024 — keep the commands, clip the prose
+    head = f"text2cad PROPOSAL: {slug}"
+    if d["scores"]:
+        head += "\n" + d["scores"]
+    cap = join_block(head, clip(d["pitch"], 1024 - len(go) - len(head) - 6), go)
+    if not hero.is_file():  # a failed DRAFT must not swallow the proposal
+        telegram_send_text(f"{cap}\n\n(no renders — DRAFT produced no hero.png)")
+        return "telegram: proposal sent as text (no renders)"
+    for img, c in ((hero, cap), (parts, f"{slug}: parts breakdown")):
         if img.is_file():
             subprocess.run(["curl", "-s", f"https://api.telegram.org/bot{tok}/sendPhoto",
                             "-F", f"chat_id={chat}", "-F", f"photo=@{img}", "-F", f"caption={c}"],
                            capture_output=True, timeout=60)
+    if d["why"]:
+        telegram_send_text(f"{slug} — why the panel picked it:\n\n{d['why']}"[:4000])
     return "telegram: proposal sent"
 
 
@@ -878,6 +936,7 @@ def main() -> int:
         out_dir = HERE / "out" / slug
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "discover.md").write_text(text, encoding="utf-8")
+        telegram_send_text(discover_preview(text))
         panel_dir = out_dir / "panel"
         panel_dir.mkdir(exist_ok=True)
         for rec in sorted(tmp.glob("cand_*.md")) + sorted(tmp.glob("judge_*.md")):
