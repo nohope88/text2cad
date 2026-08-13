@@ -10,16 +10,20 @@ automatic, one cycle per day.
    X/HN trends (second-brain MCP)          or a direct prompt
         │                                        │
         ▼                                        │
- ┌─────────────────┐   discover_lessons.md      │
- │ ① DISCOVER      │◀──(taste learned from      │
- │ 5 ideas, scored │    human rejects)          │
- │ novelty/desire/ │◀──taste.md ── slop bans,   │
- │ buildable       │   mechanism vocabulary,    │
- │ ⚠ trend input   │   dials NOVELTY/MECHANISM/ │
- │   ONLY — never  │   ORNAMENT (.env)          │
- │   lessons.md    │            │               │
- └────────┬────────┘            │               │
-          ▼                     ▼               ▼
+ ┌──────────────────────────────┐  discover_lessons.md  │
+ │ ① DISCOVER — panel           │◀─(taste from human    │
+ │                              │   rejects)            │
+ │  3 PROPOSE ∥ lanes:          │◀─taste.md ── slop     │
+ │  mechanism │ optical │ modular│  bans, mechanism      │
+ │  2 candidates each, blind    │  vocabulary, dials     │
+ │            ▼                 │  NOVELTY/MECHANISM/    │
+ │  3 JUDGE ∥ score all, blind  │  ORNAMENT (.env)       │
+ │  novelty/desire/buildable    │                        │
+ │            ▼                 │  ⚠ trend input ONLY —  │
+ │  pick_winner() — no LLM:     │    never lessons.md    │
+ │  medians, novelty≥7, buildable≥4                      │
+ └────────┬─────────────────────┘         │              │
+          ▼                               ▼              ▼
  ┌──────────────────────────────────────────────────┐
  │ ② BRIEF                                          │
  │ 🔍 web research → ## Not this (3 nearest, differ)│
