@@ -27,6 +27,8 @@ assemblies preferred: the mechanism is the product.
  │  listing kills a candidate,   │  once, then no product
  │  survivors ranked by medians  │  today                │
  └────────┬──────────────────────┘         │            │
+          │──▶ 📱 Telegram: winner + medians + why it won
+          │       (text, ~7min in — does not wait on renders)
           ▼                               ▼              ▼
  ┌──────────────────────────────────────────────────┐
  │ ② BRIEF                                          │
@@ -37,6 +39,8 @@ assemblies preferred: the mechanism is the product.
  ┌─────────────────┐
  │ ③ DRAFT CAD     │──▶ hero.png + multi-view ──▶ 📱 Telegram (FYI;
  └────────┬────────┘    saved to reference/         --auto skips waiting)
+                        photo caption carries the pitch + scores; no hero.png
+                        falls back to a text proposal, never to silence
           ▼
  ┌──────────────────────────────────────────────────┐   ┌─────────────┐
  │ ④ BUILD                                          │◀──│ blocks/     │
