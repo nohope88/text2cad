@@ -72,5 +72,14 @@ not merely contain one.
 - Anisotropic surface that changes with viewing angle.
 - A silhouette that reads as two different objects from two angles.
 
-A part count of 2-6 is the target. Every part must earn its place: if removing
-a part costs the object nothing, it was decoration, not mechanism.
+## Elaborate is the target
+
+Aim for an object that reads as a real piece of engineering: many distinct
+components, each visibly doing a job — a mechanical watch movement, a film
+camera, a well-made tool. Density of purposeful parts is the point, and the
+PARTS dial sets the range for the run.
+
+This does NOT relax the slop ban, it sharpens it. Every part still has to earn
+its place: if removing a part costs the object nothing, it was decoration, not
+mechanism. Elaborate means more things doing work, never more things to look
+at — a plain block wrapped in greebles is worse than the plain block.
