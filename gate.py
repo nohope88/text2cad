@@ -128,29 +128,76 @@ def slice_stl(stl_path: Path) -> dict:
         return out
 
 
+def check_one(stl: Path, do_slice: bool, tag: str) -> tuple:
+    """Mesh + slice checks for a single printable body. `tag` prefixes each
+    failure so a multi-part report names the offending part."""
+    st = {**mesh_stats(stl)}
+    st.update(slice_stl(stl) if do_slice else {"sliced": None})
+    fails = []
+    if not st["watertight"]:
+        fails.append(f"{tag}not_watertight")
+    if st["bodies"] != 1:
+        fails.append(f"{tag}bodies={st['bodies']}")
+    if st["overhang_pct"] > OVERHANG_FAIL_PCT:
+        fails.append(f"{tag}overhang={st['overhang_pct']}%")
+    if st.get("bridge_span_mm", 0) > 25:
+        fails.append(f"{tag}bridge_span={st['bridge_span_mm']}mm>25")
+    if st.get("sliced") is False:
+        fails.append(f"{tag}slice_failed")
+    # Graduated lesson (draft-stack-dock 2026-08-12): the A1-mini profile
+    # rejects footprints wider than 160mm even though the bed reads 180.
+    fw, fd = st["bbox_mm"][0], st["bbox_mm"][1]
+    if max(fw, fd) > 160:
+        fails.append(f"{tag}footprint={fw}x{fd}>160")
+    if PRINT_MIN_MAX > 0 and st.get("print_min") and st["print_min"] > PRINT_MIN_MAX:
+        fails.append(f"{tag}print_time={st['print_min']}min>max{PRINT_MIN_MAX}")
+    return st, fails
+
+
 def main() -> int:
     out_dir = Path(sys.argv[1]).resolve()
     do_slice = "--no-slice" not in sys.argv
-    stls = sorted(out_dir.glob("*.stl"))
-    if not stls:
+    # Multi-part designs are scored on the PARTS: each one prints alone, in its
+    # own orientation, so body count and overhang measured on the assembled
+    # pose would be meaningless. The assembled STL is a viewer artifact.
+    parts = sorted((out_dir / "fe_parts").glob("*.stl"))
+    meshes = parts or sorted(out_dir.glob("*.stl"))[:1]
+    if not meshes:
         report = {"pass": False, "reason": "no_stl"}
     else:
-        stl = stls[0]
-        report = {"stl": stl.name, **mesh_stats(stl)}
-        report.update(slice_stl(stl) if do_slice else {"sliced": None})
-        fails = []
-        if not report["watertight"]:
-            fails.append("not_watertight")
-        if report["bodies"] != 1:
-            fails.append(f"bodies={report['bodies']}")
-        if report["overhang_pct"] > OVERHANG_FAIL_PCT:
-            fails.append(f"overhang={report['overhang_pct']}%")
-        if report.get("bridge_span_mm", 0) > 25:
-            fails.append(f"bridge_span={report['bridge_span_mm']}mm>25")
-        if report.get("sliced") is False:
-            fails.append("slice_failed")
-        if PRINT_MIN_MAX > 0 and report.get("print_min") and report["print_min"] > PRINT_MIN_MAX:
-            fails.append(f"print_time={report['print_min']}min>max{PRINT_MIN_MAX}")
+        fails, per_part = [], {}
+        for stl in meshes:
+            st, f = check_one(stl, do_slice, f"{stl.name}: " if parts else "")
+            per_part[stl.name] = st
+            fails += f
+        stats = list(per_part.values())
+        report = {"stl": meshes[0].name, "n_parts": len(meshes),
+                  "watertight": all(s["watertight"] for s in stats),
+                  "bodies": max(s["bodies"] for s in stats),
+                  "overhang_pct": max(s["overhang_pct"] for s in stats),
+                  "bridge_span_mm": max(s.get("bridge_span_mm", 0) for s in stats),
+                  "volume_mm3": sum(s["volume_mm3"] for s in stats),
+                  "bbox_mm": max((s["bbox_mm"] for s in stats), key=max),
+                  "sliced": (None if any(s.get("sliced") is None for s in stats)
+                             else all(s.get("sliced") for s in stats)),
+                  "print_min": sum(s.get("print_min") or 0 for s in stats) or None}
+        if parts:
+            report["parts"] = per_part
+        # Refuse to score meshes older than the source that generated them.
+        # Twice now (draft-stack-dock, 2026-08-12 and again 2026-08-13) a
+        # repair session edited main.py, hit the `cad` wrapper's 30s default
+        # --wall-clock-s, read the SANDBOX_TIMEOUT as "can't export right
+        # now", and let the gate re-score a minutes-old mesh -- burning a
+        # whole tier re-diagnosing an already-fixed defect. Prose guidance in
+        # lessons.md did not stop the second occurrence, so it is mechanical
+        # here: a timeout is not a build failure, retry `cad` with a larger
+        # --wall-clock-s and re-export before trusting any verdict.
+        src = out_dir / "main.py"
+        oldest = min(m.stat().st_mtime for m in meshes)
+        if src.is_file() and src.stat().st_mtime > oldest:
+            stale_s = int(src.stat().st_mtime - oldest)
+            report["stale_stl_s"] = stale_s
+            fails.append(f"stale_stl(main.py {stale_s}s newer than exports; re-export)")
         fails += lint_code(out_dir)
         fc = out_dir / "fit_checks.py"
         if fc.is_file():
