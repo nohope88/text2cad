@@ -363,13 +363,28 @@ PROPOSE_LANES = {
 N_JUDGES = 3
 
 
-def propose_prompt(lane: str, out_dir: Path, trend_files: list) -> str:
+def blacklist_block(found: list) -> str:
+    if not found:
+        return ""
+    lines = "\n".join(f"- {slug} — already for sale: {url}" for slug, url in found)
+    return ("\n\nALREADY FOR SALE — the previous round proposed these and the judges "
+            "found every one of them on the market. Do not propose them, and do not "
+            "propose their neighbours; go somewhere the search could not reach:\n"
+            + lines)
+
+
+def propose_prompt(lane: str, out_dir: Path, trend_files: list, found: list = ()) -> str:
     return f"""{HEADLESS_WARNING}
 
 You are ONE of three independent PROPOSE agents in a text-to-CAD product
 pipeline. The pipeline ships ONE product per day, so this shortlist is the whole
 day's output — a safe pick wastes every phase downstream.
-{discover_lessons_block()}{taste_block()}
+
+THE BAR: a product that does not exist yet. Not "a fresh take on", not "better
+than" — a thing a shopper cannot find for sale. Judges will search Amazon, Etsy,
+Printables, Thingiverse and MakerWorld for every candidate you send, and any
+candidate they find a real listing for is killed on the spot, whatever it scores.
+{discover_lessons_block()}{taste_block()}{blacklist_block(list(found))}
 
 {trend_source_block(trend_files)}
 
@@ -385,7 +400,12 @@ PROCESS:
    the taste vocabulary (or one you name yourself and can describe in a
    sentence). Hard constraints: every part fits 160x160x180mm, and no
    copyrighted or trademarked IP.
-3. Self-check each one: if the pitch still makes sense after swapping its theme
+3. SEARCH before you commit (WebSearch): look for each candidate on Amazon,
+   Etsy, Printables, Thingiverse and MakerWorld the way a shopper would, in the
+   words a shopper would use. If you find the same product — same mechanism
+   doing the same job, not merely the same category — bin it and propose
+   another. Record the closest thing you did find in NEAREST.
+4. Self-check each one: if the pitch still makes sense after swapping its theme
    for any other theme, it is a themed skin — bin it and propose another.
 
 OUTPUT — write `{out_dir}/cand_{lane}.md`: two blocks in exactly this format and
@@ -395,6 +415,7 @@ CANDIDATE: <kebab-case-slug>
 PITCH: one sentence — what it is and what it does
 MECHANISM: the named move it is built around
 PARTS: <number 2-6>
+NEAREST: the closest thing you found for sale — URL, then why yours is not it
 WHY-NOBODY-HAS-THIS: one sentence
 PROMPT: one-line product prompt for the brief phase
 
@@ -413,23 +434,35 @@ changes nothing — score what you actually think.
 Read every `{out_dir}/cand_*.md`. Ignore which file a candidate came from: the
 lanes are a brainstorming device, not a quality signal.
 
-Score EVERY candidate 0-10 on three axes:
-- novelty — 10 = nothing like it exists on any marketplace; 0 = sold everywhere.
-  USE WEBSEARCH on this axis. Whether the thing already exists is the one claim
-  a proposer cannot check about its own idea, and it is the axis most often wrong.
+FIRST, THE ONLY GATE THAT MATTERS — does it already exist? For every candidate,
+search Amazon, Etsy, Printables, Thingiverse and MakerWorld the way a shopper
+would, in the words a shopper would use, and check the proposer's NEAREST claim
+rather than trusting it. "Exists" means THE SAME PRODUCT — the same mechanism
+doing the same job — not the same category and not the same theme: a desk clock
+existing does not kill a clock whose escapement is its face, but a printed
+escapement clock on Etsy does. Report `EXISTS <slug> yes <url>` only with a real
+listing you actually opened; `EXISTS <slug> no none` otherwise. One judge finding
+a listing kills that candidate, so do not guess in either direction — a URL is
+the only thing that counts as a find.
+
+THEN score EVERY candidate 0-10 on three axes:
+- novelty — distance from the nearest thing that DOES exist. 10 = nothing in the
+  neighbourhood; 5 = clearly adjacent to something on sale; 0 = a restyle of it.
 - desire — 10 = a stranger wants it before they can explain why. Score WANTING,
   not naming. Hard to classify is not a defect; safe and generic is.
 - buildable — 10 = modelable in CadQuery and printable unattended on an FDM
   machine. Below 4 means genuinely impossible, not merely difficult.
 
-OUTPUT — write `{out_dir}/judge_{idx}.md`: first one line per candidate reading
-exactly `SCORE <slug> <novelty> <desire> <buildable>` (integers, spaces, nothing
-else on the line), then one sentence per candidate explaining its LOWEST score.
+OUTPUT — write `{out_dir}/judge_{idx}.md`: one line per candidate reading exactly
+`EXISTS <slug> yes <url>` or `EXISTS <slug> no none`, then one line per candidate
+reading exactly `SCORE <slug> <novelty> <desire> <buildable>` (integers, spaces,
+nothing else on those lines), then one sentence per candidate explaining its
+LOWEST score or the listing you found.
 
 Reply with ONE line: the slug you would ship."""
 
 
-CAND_FIELDS = ("PITCH", "MECHANISM", "PARTS", "WHY-NOBODY-HAS-THIS", "PROMPT")
+CAND_FIELDS = ("PITCH", "MECHANISM", "PARTS", "NEAREST", "WHY-NOBODY-HAS-THIS", "PROMPT")
 
 
 def parse_candidates(out_dir: Path) -> dict:
@@ -461,6 +494,19 @@ def parse_scores(out_dir: Path) -> dict:
     return scores
 
 
+def parse_exists(out_dir: Path) -> dict:
+    """slug -> first evidence URL a judge opened. A bare `yes` with no URL is
+    not evidence and is ignored: the whole point of the gate is that a find can
+    be checked by a human the next morning."""
+    found = {}
+    for f in sorted(out_dir.glob("judge_*.md")):
+        for ln in f.read_text(encoding="utf-8", errors="ignore").splitlines():
+            m = re.match(r"EXISTS\s+([a-z0-9-]+)\s+yes\s+(https?://\S+)", ln.strip(), re.I)
+            if m:
+                found.setdefault(m.group(1).lower(), m.group(2))
+    return found
+
+
 def pick_winner(out_dir: Path) -> str:
     """Deterministic selection from the judges' medians, written to discover.md.
 
@@ -470,15 +516,18 @@ def pick_winner(out_dir: Path) -> str:
     cannot be argued with.
     """
     cands, scores = parse_candidates(out_dir), parse_scores(out_dir)
+    found = parse_exists(out_dir)
     ranked = []
     for slug, c in cands.items():
         votes = scores.get(slug)
-        if not votes:
+        if not votes or slug in found:
             continue
         nov, des, bui = (statistics.median([v[i] for v in votes]) for i in range(3))
         ranked.append({"slug": slug, "c": c, "n": nov, "d": des, "b": bui,
                        "sum": nov + des, "votes": len(votes)})
     if not ranked:
+        if cands and len(found) >= len([c for c in cands if c in scores]) > 0:
+            return ""  # everything is already for sale — caller re-proposes
         raise SystemExit(f"ABORT: {len(cands)} candidates, {len(scores)} scored — "
                          f"panel produced nothing rankable")
     ranked.sort(key=lambda r: (r["sum"], r["n"]), reverse=True)
@@ -489,6 +538,10 @@ def pick_winner(out_dir: Path) -> str:
         f"| {r['slug']} | {r['c'].get('lane', '?')} | {r['c'].get('PARTS', '?')} | "
         f"{r['n']:g} | {r['d']:g} | {r['b']:g} | {r['votes']} | "
         f"{r['c'].get('MECHANISM', '')} |" for r in ranked)
+    if found:
+        rows += "\n" + "\n".join(
+            f"| ~~{slug}~~ | — | — | — | — | — | — | KILLED, already for sale: {url} |"
+            for slug, url in found.items())
     warn = "" if eligible else ("\n\n⚠ LOW-NOVELTY ROUND: no candidate cleared "
                                 "novelty>=7 — shipping the best of a weak field.")
     text = f"""# Discover panel — {len(cands)} candidates, {N_JUDGES} judges
@@ -514,21 +567,39 @@ PROMPT: {win['c'].get('PROMPT') or win['c'].get('PITCH', win['slug'].replace('-'
     return text
 
 
+MAX_PANEL_ROUNDS = 2
+
+
 def run_discover_panel(out_dir: Path, trend_files: list, run_log: dict) -> str:
-    """Propose in parallel, judge in parallel, pick in Python."""
-    for stale in list(out_dir.glob("cand_*.md")) + list(out_dir.glob("judge_*.md")):
-        stale.unlink()  # yesterday's shortlist must never be re-judged today
-    with ThreadPoolExecutor(max_workers=len(PROPOSE_LANES)) as ex:
-        list(ex.map(lambda lane: run_phase(
-            f"propose-{lane}", propose_prompt(lane, out_dir, trend_files), out_dir,
-            14, run_log, timeout_s=1800, model=model_for("discover")), PROPOSE_LANES))
-    if not list(out_dir.glob("cand_*.md")):
-        raise SystemExit("ABORT: no proposer produced candidates")
-    with ThreadPoolExecutor(max_workers=N_JUDGES) as ex:
-        list(ex.map(lambda i: run_phase(
-            f"judge-{i}", judge_prompt(i, out_dir), out_dir,
-            10, run_log, timeout_s=1500, model=model_for("judge")), range(1, N_JUDGES + 1)))
-    return pick_winner(out_dir)
+    """Propose in parallel, judge in parallel, pick in Python — and if the judges
+    found every candidate already for sale, go round again with what they found
+    as a blacklist. One retry, then give up: a day with no product beats a day
+    spent building something a shopper can already buy."""
+    found = []
+    for rnd in range(1, MAX_PANEL_ROUNDS + 1):
+        for stale in list(out_dir.glob("cand_*.md")) + list(out_dir.glob("judge_*.md")):
+            stale.unlink()  # a previous round must never be re-judged
+        tag = "" if rnd == 1 else f"-r{rnd}"
+        with ThreadPoolExecutor(max_workers=len(PROPOSE_LANES)) as ex:
+            list(ex.map(lambda lane: run_phase(
+                f"propose-{lane}{tag}", propose_prompt(lane, out_dir, trend_files, found),
+                out_dir, 14, run_log, timeout_s=1800, model=model_for("discover")),
+                PROPOSE_LANES))
+        if not list(out_dir.glob("cand_*.md")):
+            raise SystemExit("ABORT: no proposer produced candidates")
+        with ThreadPoolExecutor(max_workers=N_JUDGES) as ex:
+            list(ex.map(lambda i: run_phase(
+                f"judge-{i}{tag}", judge_prompt(i, out_dir), out_dir,
+                10, run_log, timeout_s=1500, model=model_for("judge")),
+                range(1, N_JUDGES + 1)))
+        text = pick_winner(out_dir)
+        if text:
+            return text
+        found += list(parse_exists(out_dir).items())
+        print(f"panel round {rnd}: every candidate is already for sale "
+              f"({len(found)} listings) — re-proposing", flush=True)
+    raise SystemExit("ABORT: every candidate across "
+                     f"{MAX_PANEL_ROUNDS} rounds is already for sale — no product today")
 
 
 def draft_prompt(slug: str, out_dir: Path) -> str:
