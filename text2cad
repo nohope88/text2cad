@@ -477,8 +477,14 @@ def parse_candidates(out_dir: Path) -> dict:
             d = {"lane": f.stem[len("cand_"):]}
             for ln in lines[1:]:
                 k, _, v = ln.partition(":")
-                if k.strip().upper() in CAND_FIELDS:
-                    d[k.strip().upper()] = v.strip()
+                k = k.strip().upper()
+                if k in CAND_FIELDS:
+                    # PARTS comes back as prose often enough ("3 (grating body
+                    # plate with...)") to bloat the table; keep the count.
+                    if k == "PARTS":
+                        n = re.match(r"\s*(\d+)", v)
+                        v = n.group(1) if n else v
+                    d[k] = v.strip()
             cands.setdefault(m.group(1)[:40], d)
     return cands
 
@@ -583,10 +589,15 @@ def run_discover_panel(out_dir: Path, trend_files: list, run_log: dict) -> str:
         with ThreadPoolExecutor(max_workers=len(PROPOSE_LANES)) as ex:
             list(ex.map(lambda lane: run_phase(
                 f"propose-{lane}{tag}", propose_prompt(lane, out_dir, trend_files, found),
-                out_dir, 14, run_log, timeout_s=1800, model=model_for("discover")),
+                out_dir, 24, run_log, timeout_s=1800, model=model_for("discover")),
                 PROPOSE_LANES))
-        if not list(out_dir.glob("cand_*.md")):
+        empty = [l for l in PROPOSE_LANES if not (out_dir / f"cand_{l}.md").is_file()]
+        if len(empty) == len(PROPOSE_LANES):
             raise SystemExit("ABORT: no proposer produced candidates")
+        if empty:  # a silent lane costs a third of the shortlist -- say so
+            print(f"panel round {rnd}: lane(s) {', '.join(empty)} returned nothing — "
+                  f"shortlist is {len(PROPOSE_LANES) - len(empty)}/{len(PROPOSE_LANES)} lanes",
+                  flush=True)
         with ThreadPoolExecutor(max_workers=N_JUDGES) as ex:
             list(ex.map(lambda i: run_phase(
                 f"judge-{i}{tag}", judge_prompt(i, out_dir), out_dir,
