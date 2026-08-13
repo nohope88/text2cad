@@ -13,10 +13,13 @@ automatic, one cycle per day.
  ┌─────────────────┐   discover_lessons.md      │
  │ ① DISCOVER      │◀──(taste learned from      │
  │ 5 ideas, scored │    human rejects)          │
- │ novelty/desire/ │  ⚠ trend input ONLY —      │
- │ buildable       │    never lessons.md        │
- └────────┬────────┘                            │
-          ▼                                     ▼
+ │ novelty/desire/ │◀──taste.md ── slop bans,   │
+ │ buildable       │   mechanism vocabulary,    │
+ │ ⚠ trend input   │   dials NOVELTY/MECHANISM/ │
+ │   ONLY — never  │   ORNAMENT (.env)          │
+ │   lessons.md    │            │               │
+ └────────┬────────┘            │               │
+          ▼                     ▼               ▼
  ┌──────────────────────────────────────────────────┐
  │ ② BRIEF                                          │
  │ 🔍 web research → ## Not this (3 nearest, differ)│
