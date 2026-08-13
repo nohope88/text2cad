@@ -1,28 +1,32 @@
 # text2cad
 
 Autonomous trend→product pipeline: scans X/HN trends, picks a 3D-printable
-product that does not exist yet — scored on novelty and desire, preferring
-multi-part assemblies — and produces print-ready `.step`/`.stl` per part, fully
-automatic, one cycle per day.
+product that does not exist yet — the bar is that a judge cannot find it for
+sale, checked by search with a URL as evidence — and produces print-ready
+`.step`/`.stl` per part, fully automatic, one cycle per day. Multi-part
+assemblies preferred: the mechanism is the product.
 
 ```
  INPUT ────────────────────────────────────────────────────────────────
    X/HN trends (second-brain MCP)          or a direct prompt
         │                                        │
         ▼                                        │
- ┌──────────────────────────────┐  discover_lessons.md  │
- │ ① DISCOVER — panel           │◀─(taste from human    │
- │                              │   rejects)            │
- │  3 PROPOSE ∥ lanes:          │◀─taste.md ── slop     │
- │  mechanism │ optical │ modular│  bans, mechanism      │
- │  2 candidates each, blind    │  vocabulary, dials     │
- │            ▼                 │  NOVELTY/MECHANISM/    │
- │  3 JUDGE ∥ score all, blind  │  ORNAMENT (.env)       │
- │  novelty/desire/buildable    │                        │
- │            ▼                 │  ⚠ trend input ONLY —  │
- │  pick_winner() — no LLM:     │    never lessons.md    │
- │  medians, novelty≥7, buildable≥4                      │
- └────────┬─────────────────────┘         │              │
+ ┌───────────────────────────────┐ discover_lessons.md  │
+ │ ① DISCOVER — panel            │◀─(taste from human   │
+ │                               │   rejects)           │
+ │  3 PROPOSE ∥ lanes:           │◀─taste.md ── slop    │
+ │  mechanism │ optical │ modular│  bans, mechanism     │
+ │  search first, 2 candidates   │  vocabulary, dials   │
+ │  each, blind to each other    │  NOVELTY/MECHANISM/  │
+ │             ▼                 │  ORNAMENT (.env)     │
+ │  3 JUDGE ∥ blind: search each │                      │
+ │  on Amazon/Etsy/Printables →  │  ⚠ trend input ONLY  │
+ │  EXISTS <slug> yes <url>      │    — never lessons.md│
+ │             ▼                 │                      │
+ │  pick_winner() — no LLM: ONE  │  all found → repropose
+ │  listing kills a candidate,   │  once, then no product
+ │  survivors ranked by medians  │  today                │
+ └────────┬──────────────────────┘         │            │
           ▼                               ▼              ▼
  ┌──────────────────────────────────────────────────┐
  │ ② BRIEF                                          │
