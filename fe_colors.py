@@ -93,7 +93,11 @@ def main():
     stage = Path("/root/aibatch") / did
     stage.mkdir(parents=True, exist_ok=True)
     if not (stage / "model.stl").exists():
-        stl = out_dir / f"{slug}.stl"
+        # The staged mesh must MATCH the uploaded assembled.stl — img2print's
+        # gapped viewer variant, when present, is what actually sits on the CDN.
+        stl = out_dir / f"{slug}_viewer.stl"
+        if not stl.is_file():
+            stl = out_dir / f"{slug}.stl"
         if not stl.is_file():
             stl = out_dir / "main.stl"
         if not stl.is_file():
@@ -140,10 +144,15 @@ def main():
             {"design_id": D, "history_id": hist["_id"]},
             {"$set": {"assembly_parts": ap, "part_colors": pc,
                       "project_url": hist["project_url"], "updated_at": now},
-             "$setOnInsert": {"created_at": now, "status": "done", "superseded": True,
+             # uniq_generation_job is unique but NOT sparse, and the lone null
+             # slot was consumed by the eclipse inert doc (2026-08-13) — every
+             # later insert needs its own id. A fresh ObjectId is never looked
+             # up (repo/thumbnail_job.go queries BY real generation-job ids).
+             "$setOnInsert": {"generation_job_id": ObjectId(),
+                              "created_at": now, "status": "done", "superseded": True,
                               "image_published": True, "video_published": True}},
             upsert=True)
-        print(f"fe_colors: job {updated if res.matched_count else inserted}")
+        print(f"fe_colors: job {'updated' if res.matched_count else 'inserted'}")
 
     # 4. Strict verify against the exact map the FE will resolve.
     (stage / "assembly_colors.json").write_text(
