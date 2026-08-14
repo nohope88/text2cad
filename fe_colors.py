@@ -18,7 +18,7 @@ Steps  1. stage /root/aibatch/<id>/model.stl and run render_three43_fe.mjs
        2. own each FE group geometrically (bbox + nearest part vertices).
        3. build assembly_parts (order = FE group, part = FE color key,
           color = owner's color) + part_colors, upsert the history's
-          thumbnail job (inert eclipse-style doc when none exists).
+          thumbnail job (a real queued render job when none exists).
        4. re-run the dump FE_STRICT=1 against the final colors — exit 4 if
           any real part would still render white.
 Exit   0 ok (or single-mesh design: nothing to key), 2 bad input, 4 verify failed.
@@ -146,11 +146,14 @@ def main():
                       "project_url": hist["project_url"], "updated_at": now},
              # uniq_generation_job is unique but NOT sparse, and the lone null
              # slot was consumed by the eclipse inert doc (2026-08-13) — every
-             # later insert needs its own id. A fresh ObjectId is never looked
-             # up (repo/thumbnail_job.go queries BY real generation-job ids).
+             # later insert needs its own id.
+             # Contract (models/thumbnail_job.go:57-60): a new render job
+             # carries design_id, history_id, generation_job_id, project_url,
+             # status "queued" — nothing else. status afterwards belongs to the
+             # Blender worker; superseded/image_published/video_published are
+             # Go's publication acks and must never be written from here.
              "$setOnInsert": {"generation_job_id": ObjectId(),
-                              "created_at": now, "status": "done", "superseded": True,
-                              "image_published": True, "video_published": True}},
+                              "created_at": now, "status": "queued"}},
             upsert=True)
         print(f"fe_colors: job {'updated' if res.matched_count else 'inserted'}")
 
