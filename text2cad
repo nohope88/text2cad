@@ -1271,18 +1271,20 @@ def main() -> int:
 
     spent = {t: 0 for t in TIER_BUDGET}
     attempt = 0
-    bonus_granted = False
+    bonus_granted = {t: False for t in TIER_BUDGET}
     while not (run_log["gate"].get("pass") and not lens_fails):
         fails = (run_log["gate"].get("fails") or []) + lens_fails or ["unknown"]
         tier = fail_tier(fails)
-        if spent[tier] >= TIER_BUDGET[tier] + (1 if bonus_granted else 0):
-            run_arbitration(slug, out_dir, fails, tier, spent[tier], run_log)
-            break
         if spent[tier] >= TIER_BUDGET[tier]:
-            if not scores_improving(out_dir):
+            # one bonus repair per tier, and only while that tier is still
+            # climbing. Previously this was two guards whose conditions were
+            # identical before any bonus (spent >= budget + 0 vs spent >=
+            # budget), so the first guard always won and the bonus was
+            # unreachable dead code.
+            if bonus_granted[tier] or not scores_improving(out_dir):
                 run_arbitration(slug, out_dir, fails, tier, spent[tier], run_log)
                 break
-            bonus_granted = True
+            bonus_granted[tier] = True
             telegram_send_text(f"{slug}: budget exhausted but failing lens scores "
                                f"still climbing — granting 1 bonus repair")
         spent[tier] += 1
