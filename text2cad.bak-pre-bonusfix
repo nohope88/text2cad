@@ -157,22 +157,6 @@ USER REQUEST: "{user_prompt}"
      cable plug, hand, screw...) with bounding-box dims in mm and where it
      sits relative to the part. The build phase turns these into mock
      fit-checks.
-4. FEASIBILITY SELF-CHECK (arithmetic, before finalizing): for every pair of
-   explicit numbers that share the same local volume, wall, or print axis —
-   features stacked/spanning along one dimension, a cutout vs. the wall it
-   sits in, a cell/lattice pitch vs. the space that must contain it, a
-   coverage-area claim vs. the footprint left after other features are
-   subtracted — write out the sum/fit arithmetic and confirm it closes
-   inside the stated envelope. A brief that ships two numbers whose own
-   arithmetic does not fit is not caught by any later gate; it burns a full
-   build + repair budget before arbitration walks it back (draft-stack-dock,
-   2026-08-13: one arbitration round found FOUR such conflicts in a single
-   brief — 36 slots of 3.5mm needing 41.6mm of run in an 11.6mm span, a
-   10mm pocket inside a 2.4mm wall, a 55%/14000mm² deck-coverage claim
-   against a ~12217mm² reachable ceiling, and a 12mm lattice cell
-   inside a 2mm wall). If a number does not fit, relax ONE of the
-   conflicting numbers now, in the brief — do not ship the conflict for
-   BUILD or arbitration to discover later at higher cost.
 
 Do NOT write any code. When brief.md exists, reply with ONE line: the product title."""
 
@@ -195,12 +179,7 @@ Then read `{HERE}/blocks/BLOCKS.md` — use a golden block wherever one happens 
 fit a shape the brief already calls for (they are testbench-verified and save
 gate rounds), but NEVER let the block vocabulary decide the design: the blocks
 cover boring primitives, and building the geometry the brief actually asks for
-is the job. Your sandbox cannot `import` across the project boundary, so COPY
-`{HERE}/blocks/cadblocks.py` into `{out_dir}/` and import it locally instead
-of hand-reimplementing a block from memory — reimplementing drifts from the
-testbench-verified version and burns turns (draft-stack-dock rewrote
-`rounded_box` by hand instead of copying it; terminal-cursor-pen-holder
-copied the file verbatim and it just worked).
+is the job.
 Then read `{CADCODE}/SKILL.md` IN FULL and follow its loop and non-negotiables,
 using its cadlib helpers. This is a "new part" task.
 The cad tool: `{CAD_CMD}`
@@ -509,21 +488,10 @@ You are ONE of three independent PROPOSE agents in a text-to-CAD product
 pipeline. The pipeline ships ONE product per day, so this shortlist is the whole
 day's output — a safe pick wastes every phase downstream.
 
-THE BAR — exactly two requirements, nothing more: (1) CREATIVE — a twist a
-shopper has not seen, even on a familiar product type; (2) NOT FOR SALE —
-judges will search Amazon, Etsy, Printables, Thingiverse and MakerWorld for
-every candidate you send, and any candidate they find a real listing for is
-killed on the spot, whatever it scores. Familiar archetypes with a creative
-twist are WELCOME — think "gear-driven robot-arm claw toy": every mechanism in
-it is a well-known, forgiving archetype (spur gears, pin joints, turntable,
-claw), yet the combination is its own product. Obscurity is NOT a requirement
-and earns nothing.
-
-FORGIVING-MECHANISM RULE (hard): the product must still WORK when every printed
-dimension is off by 0.5mm. Any candidate whose FUNCTION depends on precision —
-optical alignment, metrology accuracy, fine threads, sub-mm fits, calibrated
-scales — dies in FDM plus generated CAD; do not propose it. Visible motion a
-buyer understands in two seconds beats a clever function that needs explaining.
+THE BAR: a product that does not exist yet. Not "a fresh take on", not "better
+than" — a thing a shopper cannot find for sale. Judges will search Amazon, Etsy,
+Printables, Thingiverse and MakerWorld for every candidate you send, and any
+candidate they find a real listing for is killed on the spot, whatever it scores.
 {discover_lessons_block()}{taste_block()}{blacklist_block(list(found))}
 
 {trend_source_block(trend_files)}
@@ -594,20 +562,12 @@ the only thing that counts as a find.
 THEN score EVERY candidate 0-10 on four axes:
 - novelty — distance from the nearest thing that DOES exist. 10 = nothing in the
   neighbourhood; 5 = clearly adjacent to something on sale; 0 = a restyle of it.
-  A 5 is NOT a defect — the exists-gate above already guarantees the product is
-  not for sale; do not reward obscurity for its own sake. Familiar archetype +
-  creative twist scores the twist.
 - desire — 10 = a stranger wants it before they can explain why. Score WANTING,
-  not naming. Visible motion a buyer understands in two seconds is a plus;
-  a function that needs a paragraph to explain is a minus.
+  not naming. Hard to classify is not a defect; safe and generic is.
 - buildable — 10 = modelable in CadQuery and printable unattended on an FDM
-  machine, AND still functional when every dimension is off by 0.5mm. Score 4 or
-  below for any candidate whose FUNCTION depends on precision (optical
-  alignment, metrology accuracy, fine threads, sub-mm fits, calibrated scales) —
-  FDM plus generated CAD cannot deliver it. Part COUNT is not a buildability
-  problem: twelve forgiving archetype mechanisms (gears, hinges, claws,
-  turntables) that each print fine is a 9; one precision-critical function is
-  a 3 no matter how few parts it has.
+  machine. Below 4 means genuinely impossible, not merely difficult. Part COUNT
+  is not a buildability problem: twelve parts that each print fine is a 9, and
+  scoring it down for being ambitious is the error this axis keeps making.
 - craft — component density and mechanical richness. 10 = an assembly you could
   stare at, many distinct parts each visibly doing a job, like a watch movement
   or a film camera; 5 = a sound mechanism in a plain housing; 1 = a simple solid
@@ -707,12 +667,8 @@ def pick_winner(out_dir: Path) -> str:
         if not votes or slug in found or slug in rejected:
             continue
         nov, des, bui, cra = (statistics.median([v[i] for v in votes]) for i in range(4))
-        # 2026-08-15: objective is desire+buildable+craft — novelty is only a
-        # creativity FLOOR (the exists-gate already enforces "not for sale").
-        # Optimizing novelty picked precision instruments the build stage can't
-        # deliver (shadow-moire-contour-bench: $56, likeness 2/10, no product).
         ranked.append({"slug": slug, "c": c, "n": nov, "d": des, "b": bui, "k": cra,
-                       "sum": des + bui + cra, "votes": len(votes)})
+                       "sum": nov + des + cra, "votes": len(votes)})
     if not ranked:
         scored = [c for c in cands if c in scores]
         if scored and all(c in found or c in rejected for c in scored):
@@ -720,12 +676,9 @@ def pick_winner(out_dir: Path) -> str:
         raise SystemExit(f"ABORT: {len(cands)} candidates, {len(scores)} scored — "
                          f"panel produced nothing rankable")
     craft_min = int(os.environ.get("CRAFT", "6"))
-    novelty_min = int(os.environ.get("NOVELTY_MIN", "5"))
-    buildable_min = int(os.environ.get("BUILDABLE_MIN", "7"))
-    ranked.sort(key=lambda r: (r["sum"], r["b"]), reverse=True)
+    ranked.sort(key=lambda r: (r["sum"], r["n"]), reverse=True)
     eligible = [r for r in ranked
-                if r["n"] >= novelty_min and r["b"] >= buildable_min
-                and r["k"] >= craft_min]
+                if r["n"] >= 7 and r["b"] >= 4 and r["k"] >= craft_min]
     win = (eligible or ranked)[0]
 
     rows = "\n".join(
@@ -740,9 +693,8 @@ def pick_winner(out_dir: Path) -> str:
         rows += "\n" + "\n".join(
             f"| ~~{slug}~~ | — | — | — | — | — | — | — | KILLED, human rejected earlier: {reason} |"
             for slug, reason in rejected.items())
-    warn = "" if eligible else (f"\n\n⚠ WEAK ROUND: nothing cleared "
-                                f"novelty>={novelty_min}, buildable>={buildable_min} "
-                                f"and craft>={craft_min} — shipping "
+    warn = "" if eligible else ("\n\n⚠ WEAK ROUND: nothing cleared novelty>=7, "
+                                f"buildable>=4 and craft>={craft_min} — shipping "
                                 "the best of a weak field.")
     text = f"""# Discover panel — {len(cands)} candidates, {N_JUDGES} judges
 
@@ -751,8 +703,7 @@ def pick_winner(out_dir: Path) -> str:
 {rows}
 
 Scores are medians over independent judges; the winner is the highest
-desire+buildable+craft clearing novelty>={novelty_min}, buildable>={buildable_min}
-and craft>={craft_min} (novelty is a creativity floor, not the objective).{warn}
+novelty+desire+craft clearing novelty>=7, buildable>=4 and craft>={craft_min}.{warn}
 
 WINNER: {win['slug']}
 
@@ -838,13 +789,6 @@ assembled pose in that one export — correct silhouette, every feature visibly
 present, sane proportions. Per-part files come later at BUILD; a draft only has
 to look right. Draft quality bar: it must look right in
 renders; do not spend turns chasing perfect fillets or gate metrics.
-
-EXPORT-FIRST DISCIPLINE (hard): within your FIRST 12 turns, have a rough
-assembled `{slug}.stl` on disk and `{slug}_review/_assembled.png` rendered —
-blocky placeholder proportions are fine. Only then spend the remaining turns
-refining parts and re-rendering. Drafts that die at the turn limit with ZERO
-exports waste the whole phase; a crude exported draft is always worth more
-than a perfect unexported one.
 
 Then render the FULL set with `{REVIEW_CMD}` and ensure at least these exist in
 `{out_dir}/{slug}_review/`: `_assembled.png` (hero), `_qa.png` (multi-view grid),
@@ -1141,17 +1085,6 @@ def run_build(slug: str, out_dir: Path, run_log: dict) -> None:
         verdict = lens_verdict(out_dir, "likeness", r, mtime)
         run_log["build_milestone"] = verdict
         print(f"[build-milestone] likeness: {verdict}", flush=True)
-        # 2026-08-15: a hopeless silhouette is not repairable in half a budget —
-        # shadow-moire scored 2/10 at milestone, then burned $8 build2 + panel
-        # anyway. Below the threshold, kill the whole run now.
-        m_score = re.search(r"FAIL\s+(\d+(?:\.\d+)?)\s*/\s*10", verdict)
-        abort_below = float(os.environ.get("MILESTONE_ABORT_BELOW", "4"))
-        if m_score and float(m_score.group(1)) < abort_below:
-            run_log["build_aborted"] = (
-                f"milestone likeness {m_score.group(1)}/10 < {abort_below:g} — "
-                "silhouette unsalvageable, build2/gate/panel skipped to save budget")
-            print(f"[build-milestone] ABORT RUN: {run_log['build_aborted']}", flush=True)
-            return
         if verdict.startswith("PASS") and done:
             return  # silhouette approved and the build already declared DONE
         if verdict.startswith("PASS"):
@@ -1255,21 +1188,6 @@ def main() -> int:
             print("ABORT: brief.md was not produced"); return 1
         run_phase("draft", draft_prompt(slug, out_dir), out_dir, 45, run_log, timeout_s=3600)
         rd = out_dir / f"{slug}_review"
-        if not (rd / "_assembled.png").is_file():
-            # 2026-08-15: two drafts in a row hit the turn cap with zero
-            # exports and the proposal went out render-less. One corrective
-            # retry, alert either way so a silent draft death is visible.
-            telegram_send_text(f"{slug}: draft died with no renders — one retry "
-                               "with export-first note")
-            run_phase("draft2", draft_prompt(slug, out_dir) +
-                      f"\n\nRETRY — the previous draft session hit its turn limit "
-                      f"with NO export on disk. Do not repeat that: produce "
-                      f"`{slug}.stl` and `_assembled.png` at placeholder quality "
-                      f"within your first 10 turns, then refine only with what "
-                      f"remains.", out_dir, 45, run_log, timeout_s=3600)
-            if not (rd / "_assembled.png").is_file():
-                telegram_send_text(f"text2cad {slug}: draft failed TWICE — "
-                                   f"proposal goes out without renders; check {out_dir}")
         for src, dst in ((rd / "_assembled.png", "hero.png"), (rd / "_qa.png", "parts.png")):
             if src.is_file():
                 (out_dir / dst).write_bytes(src.read_bytes())
@@ -1340,12 +1258,6 @@ def main() -> int:
                 print("ABORT: brief.md was not produced"); return 1
 
         run_build(slug, out_dir, run_log)
-        if run_log.get("build_aborted"):
-            (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
-            telegram_send_text(f"text2cad {slug}: RUN ABORTED early — "
-                               f"{run_log['build_aborted']}")
-            print(f"\n== ABORT {slug}: {run_log['build_aborted']}")
-            return 1
         if not list(out_dir.glob("*.stl")):
             print("ABORT: no .stl produced"); return 1
 
@@ -1359,20 +1271,18 @@ def main() -> int:
 
     spent = {t: 0 for t in TIER_BUDGET}
     attempt = 0
-    bonus_granted = {t: False for t in TIER_BUDGET}
+    bonus_granted = False
     while not (run_log["gate"].get("pass") and not lens_fails):
         fails = (run_log["gate"].get("fails") or []) + lens_fails or ["unknown"]
         tier = fail_tier(fails)
+        if spent[tier] >= TIER_BUDGET[tier] + (1 if bonus_granted else 0):
+            run_arbitration(slug, out_dir, fails, tier, spent[tier], run_log)
+            break
         if spent[tier] >= TIER_BUDGET[tier]:
-            # one bonus repair per tier, and only while that tier is still
-            # climbing. Previously this was two guards whose conditions were
-            # identical before any bonus (spent >= budget + 0 vs spent >=
-            # budget), so the first guard always won and the bonus was
-            # unreachable dead code.
-            if bonus_granted[tier] or not scores_improving(out_dir):
+            if not scores_improving(out_dir):
                 run_arbitration(slug, out_dir, fails, tier, spent[tier], run_log)
                 break
-            bonus_granted[tier] = True
+            bonus_granted = True
             telegram_send_text(f"{slug}: budget exhausted but failing lens scores "
                                f"still climbing — granting 1 bonus repair")
         spent[tier] += 1
