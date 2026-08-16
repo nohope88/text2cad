@@ -128,13 +128,26 @@ def main():
 
     ap, pc = [], {}
     for g in groups:
-        own = owner_of(g["centroid"])
+        # 2026-08-16: when the FE group key IS a sibling part filename, the
+        # match is exact by NAME — the geometric fallback mis-owned all 14
+        # one-way-newsreel groups to l_frame because the frame's bbox spans
+        # the whole machine and swallowed every centroid. Geometry is only
+        # for merged single-mesh groups (keys like "assembled.stl#26").
+        own = g["key"] if g["key"] in uploaded else owner_of(g["centroid"])
         stem = own[:-4]
         ap.append({"order": g["order"], "part": g["key"], "color": palette[own],
                    "mesh_name": stem if g["faces"] >= SLIVER_TRIS else stem + "_sliver"})
         pc[own] = palette[own]
     for e in ap[:6] + [x for x in ap if x["order"] >= len(uploaded)][:6]:
         print("  ", e["order"], e["part"], "->", e["mesh_name"], e["color"])
+
+    # Degenerate-map guard: a multi-color palette resolving to ONE color means
+    # the owner matching failed wholesale (every part painted like the frame,
+    # everything else white in the viewer) — refuse to write it.
+    if len(set(pc.values())) == 1 and len(set(palette[n] for n in uploaded)) > 1:
+        print("fe_colors: DEGENERATE MAP — multi-color palette collapsed to a "
+              "single color; owner matching failed. Refusing to write.")
+        return 5
 
     if dry:
         print("fe_colors: DRY RUN — no DB write")
