@@ -117,8 +117,13 @@ def run_phase(name: str, prompt: str, out_dir: Path, max_turns: int, run_log: di
     except subprocess.TimeoutExpired:
         data = {"result": "", "error": f"phase timed out after {timeout_s}s"}
         default_err = True
+    # max_turns rides along so a postmortem can tell the two is_error cases
+    # apart: num_turns at the cap is a BUDGET failure (the phase ran out of room
+    # and needs a bigger cap or a narrower task), num_turns below it is a real
+    # agent crash (retry). Without the cap on record they look identical.
     entry = {"model": model, "wall_s": round(time.time() - t0, 1),
-             "num_turns": data.get("num_turns"), "cost_usd": data.get("total_cost_usd"),
+             "num_turns": data.get("num_turns"), "max_turns": max_turns,
+             "cost_usd": data.get("total_cost_usd"),
              "is_error": data.get("is_error", default_err)}
     with _LOG_LOCK:  # panel phases run concurrently
         run_log[name] = entry
@@ -889,6 +894,25 @@ def telegram_send_text(text: str) -> None:
                        capture_output=True, timeout=30)
 
 
+def write_postmortem(slug: str) -> None:
+    """Render out/<slug>/postmortem.md and DM the summary.
+
+    A cycle's raw run.json is unreadable after six hours — the postmortem is
+    where it becomes "this failed HERE, for THIS reason, and it cost THIS".
+    Runs as its own process and never raises: a reporting bug must not be able
+    to fail a cycle that already produced a product.
+    """
+    try:
+        r = subprocess.run([sys.executable, str(HERE / "postmortem.py"), slug, "--telegram"],
+                           cwd=HERE, capture_output=True, text=True, timeout=120)
+        if r.returncode == 0:
+            print(f"   postmortem: out/{slug}/postmortem.md")
+        else:
+            print(f"   postmortem failed: {(r.stderr or r.stdout)[-300:]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"   postmortem failed: {e}")
+
+
 def discover_digest(text: str) -> dict:
     """Winner, medians and rationale out of a discover.md.
 
@@ -1041,7 +1065,13 @@ you past the printability non-negotiables.
    and iterate SYNCHRONOUSLY until the gate prints GATE PASS.
 4. Append ONE short durable lesson to `{HERE}/lessons.md` (create if missing):
    a rule that would have PREVENTED this failure class in a future build,
-   written as an imperative (e.g. "- Always ...").
+   written as an imperative, and it MUST carry the origin tag the file's
+   header defines, or it is useless to the humans reading it later:
+   `- [cause · phase · {slug} <today> · cost <what it burned> · OPEN] Always ...`
+   Pick `cause` from the header's vocabulary (kernel, printability, brief,
+   assembly, fidelity, discipline, harness, tooling, discover) — that word is
+   what makes a recurring failure countable, so choose where the failure
+   really CAME FROM, not where it was noticed.
 
 Reply with ONE line: `REPAIRED` or `STUCK <reason>`. IMPORTANT: if your
 diagnosis is that the failure traces to `brief.md` itself demanding something
@@ -1414,6 +1444,7 @@ def main() -> int:
             telegram_send_text(f"text2cad {slug}: RUN ABORTED early — "
                                f"{run_log['build_aborted']}")
             print(f"\n== ABORT {slug}: {run_log['build_aborted']}")
+            write_postmortem(slug)
             return 1
         if not list(out_dir.glob("*.stl")):
             print("ABORT: no .stl produced"); return 1
@@ -1493,6 +1524,7 @@ def main() -> int:
           f"| {verdict.splitlines()[-1] if verdict else '?'}")
     print(f"   files: {files}")
     print(f"   total LLM cost: ${total:.4f}  (details: {out_dir}/run.json)")
+    write_postmortem(slug)
     return 0
 
 
