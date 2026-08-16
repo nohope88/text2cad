@@ -94,9 +94,21 @@ def run_phase(name: str, prompt: str, out_dir: Path, max_turns: int, run_log: di
            "--allowedTools", allowed,
            "--add-dir", str(out_dir), "--add-dir", str(SKILLS), "--add-dir", str(HERE),
            "--max-turns", str(max_turns), "--output-format", "json"]
+    # 2026-08-16: the fidelity lens loaded all 14 part STLs into one trimesh
+    # process, hit 14.8GB and the kernel OOM-killed the WHOLE pipeline. The
+    # rlimit is inherited by every child of the phase, so a runaway load now
+    # dies with a recoverable MemoryError inside the phase instead of taking
+    # the box down. PHASE_MEM_MB=0 disables.
+    cap_mb = int(os.environ.get("PHASE_MEM_MB", "12288"))
+    preexec = None
+    if cap_mb > 0:
+        def preexec():
+            import resource
+            b = cap_mb << 20
+            resource.setrlimit(resource.RLIMIT_AS, (b, b))
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=out_dir,
-                           env=phase_env(), timeout=timeout_s)
+                           env=phase_env(), timeout=timeout_s, preexec_fn=preexec)
         try:
             data = json.loads(r.stdout.strip().splitlines()[-1])
         except (json.JSONDecodeError, IndexError):
@@ -327,6 +339,11 @@ trimesh on the STL, or the numbers in `params.py`/`main.py` — and the finding
 must state the measured number and how you measured it. A claim your own
 measurement contradicts must not be written. Visual-only findings are allowed
 solely for cosmetic issues (render artifacts, colors, surface look).
+MEMORY RULE (hard): measure STLs ONE AT A TIME, each in its OWN short python
+invocation — never load every part (or the assembled mesh plus parts) into a
+single process. A 14-part all-at-once trimesh load hit 14.8GB and the kernel
+OOM-killed the entire pipeline (2026-08-16); the phase now runs under a hard
+rlimit, so an all-at-once load will die with MemoryError anyway.
 If `arbitration.md` exists, read it FIRST: claims it refuted with measurements
 must not be re-raised unless your own new measurement disagrees — a prior
 panel burned repair rounds chasing two measurably-false findings."""
@@ -1139,6 +1156,13 @@ def run_build(slug: str, out_dir: Path, run_log: dict) -> None:
         r = run_phase("build-likeness-check", lens_prompt(slug, out_dir, "likeness"),
                       out_dir, 20, run_log, timeout_s=2400)
         verdict = lens_verdict(out_dir, "likeness", r, mtime)
+        if verdict == "FAIL no output":
+            # "no output" is an agent CRASH, not a content verdict (lessons.md,
+            # three recurrences) — retry once, like the panel already does.
+            r = run_phase("build-likeness-check-retry",
+                          lens_prompt(slug, out_dir, "likeness"),
+                          out_dir, 20, run_log, timeout_s=2400)
+            verdict = lens_verdict(out_dir, "likeness", r, mtime)
         run_log["build_milestone"] = verdict
         print(f"[build-milestone] likeness: {verdict}", flush=True)
         # 2026-08-15: a hopeless silhouette is not repairable in half a budget —
@@ -1158,8 +1182,24 @@ def run_build(slug: str, out_dir: Path, run_log: dict) -> None:
             note = ("\n\nMILESTONE — a likeness lens PASSED the current silhouette "
                     f"({verdict}). Do NOT regress it: finish detail, per-part "
                     "exports, part_colors.json and fit_checks.py.")
+        elif verdict == "FAIL no output":
+            # Crashed twice: the milestone is INCONCLUSIVE. Never inject the
+            # stale findings file — 2026-08-16 a crashed lens fell through to
+            # this branch and build2 was handed the PREVIOUS run's 2/10
+            # findings, with orders to destroy an already-DONE correct model.
+            if done:
+                print("[build-milestone] lens crashed twice and the build is "
+                      "DONE — skipping build2", flush=True)
+                return
+            note = ("\n\nMILESTONE — the likeness lens crashed twice, so there "
+                    "is no silhouette verdict this round. Keep matching the "
+                    "approved renders in reference/ and finish the build: "
+                    "detail, per-part exports, part_colors.json, fit_checks.py.")
         else:
-            findings = f.read_text(encoding="utf-8") if f.is_file() else verdict
+            # Only trust findings the lens ACTUALLY wrote this round — a stale
+            # review_likeness.md describes a previous geometry.
+            fresh = f.is_file() and (mtime is None or f.stat().st_mtime > mtime)
+            findings = f.read_text(encoding="utf-8") if fresh else verdict
             note = ("\n\nMILESTONE LIKENESS CHECK FAILED at half budget — fix the "
                     "silhouette findings below BEFORE any detail or gate work; a "
                     "finished part with the wrong shape fails the run:\n" + findings)
