@@ -1282,6 +1282,18 @@ def main() -> int:
             (ref / "concept.png").write_bytes(concept.read_bytes())
         print(f"reference set: {len(list(ref.glob('*.png')))} approved renders for the build phase")
         print(telegram_send_proposal(out_dir, slug))
+        # 2026-08-16: demo video rides a DETACHED process — the H3 gateway can
+        # cold-start 35+ minutes and the cycle must never await it. The script
+        # polls, retries and telegrams the finished clip entirely on its own.
+        try:
+            (HERE / "logs").mkdir(exist_ok=True)
+            vlog = (HERE / "logs" / f"video-{slug}.log").open("a")
+            subprocess.Popen([sys.executable, str(HERE / "gen_demo_video.py"),
+                              slug], cwd=HERE, stdout=vlog,
+                             stderr=subprocess.STDOUT, start_new_session=True)
+            print(f"demo video: detached (logs/video-{slug}.log)")
+        except Exception as e:
+            print(f"demo video: spawn failed (non-fatal): {e}")
         (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
         total = sum(e.get("cost_usd") or 0 for e in run_log.values() if isinstance(e, dict) and "cost_usd" in e)
         print(f"\n== PROPOSAL READY: {slug} (${total:.2f})")
