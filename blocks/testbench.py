@@ -22,6 +22,16 @@ CASES = {
     "phone_slot_cutter": [dict(), dict(angle_deg=35, phone_t=10)],
 }
 
+# PROPOSED blocks (blocks/cadblocks.py PROPOSED_BLOCKS) — testbench-verified
+# but NOT yet Tam-approved into BLOCKS.md; kept in a separate set so a passing
+# testbench never implies library status. See cadblocks.py for provenance.
+PROPOSED_CASES = {
+    "bounds_box": [dict(x0=0, x1=40, y0=0, y1=25, z0=0, z1=10),
+                   dict(x0=-10, x1=10, y0=-5, y1=5, z0=-3, z1=3)],
+    "dovetail_tenon": [dict(), dict(throat=8, depth=4, length=30, angle_deg=20)],
+    "dovetail_socket_cutter": [dict(), dict(clearance=0.3)],
+}
+
 
 def check(name, solid) -> dict:
     with tempfile.TemporaryDirectory() as td:
@@ -43,6 +53,54 @@ def main() -> int:
             except Exception as e:
                 print(f"FAIL {name}[{i}] {kw} -> EXC {e}")
                 failures += 1
+
+    for name, cases in PROPOSED_CASES.items():
+        fn = cb.PROPOSED_BLOCKS[name]
+        for i, kw in enumerate(cases):
+            try:
+                m = check(name, fn(**kw))
+                ok = m["watertight"] and m["bodies"] == 1
+                print(f"{'PASS' if ok else 'FAIL'} [PROPOSED] {name}[{i}] {kw} -> {m}")
+                failures += 0 if ok else 1
+            except Exception as e:
+                print(f"FAIL [PROPOSED] {name}[{i}] {kw} -> EXC {e}")
+                failures += 1
+
+    # PROPOSED composition case: dovetail_tenon + dovetail_socket_cutter must
+    # actually mate — the tenon should fit (near-zero clash) inside a host
+    # block once the matching socket is cut, and should clash substantially
+    # against the SAME host before the socket is cut (proves the cut is doing
+    # real work, not a vacuous fit against empty space).
+    try:
+        import trimesh
+        THROAT, DEPTH, LENGTH, ANGLE = 6.0, 6.0, 20.0, 30.0
+        # host's bottom face (z=0) is flush with the socket's mouth plane —
+        # the mouth must open to a real face or the cut seals an internal
+        # void (trimesh then reports it as a second disconnected body).
+        host = cb.bounds_box(-15, 15, -15, 15, 0, 10)
+        tenon = cb.dovetail_tenon(THROAT, DEPTH, LENGTH, ANGLE)
+        socket = cb.dovetail_socket_cutter(THROAT, DEPTH, LENGTH, ANGLE, clearance=0.15)
+        host_cut = host.cut(socket)
+
+        def to_trimesh(solid):
+            with tempfile.TemporaryDirectory() as td:
+                stl = Path(td) / "s.stl"
+                cq.exporters.export(solid, str(stl))
+                return trimesh.load(str(stl))
+
+        tm_tenon, tm_host, tm_host_cut = to_trimesh(tenon), to_trimesh(host), to_trimesh(host_cut)
+        fit_clash = tm_tenon.intersection(tm_host_cut)
+        fit_v = 0.0 if fit_clash.is_empty else abs(fit_clash.volume)
+        blocked_clash = tm_tenon.intersection(tm_host)
+        blocked_v = 0.0 if blocked_clash.is_empty else abs(blocked_clash.volume)
+        m = check("dovetail-fit-host", host_cut)
+        ok = m["watertight"] and m["bodies"] == 1 and fit_v < 20 and blocked_v > 500
+        print(f"{'PASS' if ok else 'FAIL'} [PROPOSED] composition dovetail-fit "
+              f"fit_clash={fit_v:.0f}mm3 pre-cut_clash={blocked_v:.0f}mm3 -> {m}")
+        failures += 0 if ok else 1
+    except Exception as e:
+        print(f"FAIL [PROPOSED] composition dovetail-fit -> EXC {e}")
+        failures += 1
     # composition case: THE verified phone-stand recipe (2026-08-11, corrected
     # twice by Tam's review — first version had a buried slot, second had a slot
     # detached from the leaning face). Architecture: steep wedge (device leans ON

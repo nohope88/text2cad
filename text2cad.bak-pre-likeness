@@ -57,11 +57,6 @@ def load_env() -> None:
 def phase_env() -> dict:
     env = dict(os.environ)
     env["PATH"] = "/root/.local/bin:" + env.get("PATH", "")
-    # OOM guard: scripts/cad honors this as an address-space rlimit on itself.
-    # 2026-08-13 the kernel OOM-killed a 15.4GB boolean chain and took the whole
-    # cycle (and nearly the 15GB box) with it — a MemoryError inside one export
-    # is repairable, a dead pipeline is not.
-    env.setdefault("CADPY_MEM_LIMIT_MB", os.environ.get("CADPY_MEM_LIMIT_MB", "10240"))
     key = env.get("PANDA_DEV_KEY", "").strip()
     url = env.get("PROXY_URL", "").strip()
     if key and url:
@@ -94,21 +89,9 @@ def run_phase(name: str, prompt: str, out_dir: Path, max_turns: int, run_log: di
            "--allowedTools", allowed,
            "--add-dir", str(out_dir), "--add-dir", str(SKILLS), "--add-dir", str(HERE),
            "--max-turns", str(max_turns), "--output-format", "json"]
-    # 2026-08-16: the fidelity lens loaded all 14 part STLs into one trimesh
-    # process, hit 14.8GB and the kernel OOM-killed the WHOLE pipeline. The
-    # rlimit is inherited by every child of the phase, so a runaway load now
-    # dies with a recoverable MemoryError inside the phase instead of taking
-    # the box down. PHASE_MEM_MB=0 disables.
-    cap_mb = int(os.environ.get("PHASE_MEM_MB", "12288"))
-    preexec = None
-    if cap_mb > 0:
-        def preexec():
-            import resource
-            b = cap_mb << 20
-            resource.setrlimit(resource.RLIMIT_AS, (b, b))
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=out_dir,
-                           env=phase_env(), timeout=timeout_s, preexec_fn=preexec)
+                           env=phase_env(), timeout=timeout_s)
         try:
             data = json.loads(r.stdout.strip().splitlines()[-1])
         except (json.JSONDecodeError, IndexError):
@@ -126,19 +109,6 @@ def run_phase(name: str, prompt: str, out_dir: Path, max_turns: int, run_log: di
     result = (data.get("result") or "").strip()
     print(f"[{name}] {entry['wall_s']}s, turns={entry['num_turns']}, "
           f"${entry['cost_usd']}: {result.splitlines()[-1][:120] if result else '(no output)'}", flush=True)
-    # Quota death is a hard stop, not a phase failure: every phase rides the same
-    # claude login, so once the weekly cap hits, each "retry" burns wall-clock and
-    # produces nothing — the 08-13 cycle died this way SILENTLY. Alarm and abort.
-    if entry["is_error"]:
-        blob = (result + " " + str(data.get("error") or ""))[:2000]
-        # covers "Claude AI usage limit reached", "5-hour limit reached",
-        # "Weekly limit reached" — every phrasing the CLI uses for quota death
-        if re.search(r"usage limit|limit reached|rate limit", blob, re.I):
-            msg = (f"text2cad: claude quota exhausted during [{name}] — aborting the "
-                   f"cycle (no PANDA_DEV_KEY fallback set). {blob[:200]}")
-            print(msg, flush=True)
-            telegram_send_text(msg)
-            raise SystemExit(4)
     return result
 
 
@@ -169,22 +139,6 @@ USER REQUEST: "{user_prompt}"
      cable plug, hand, screw...) with bounding-box dims in mm and where it
      sits relative to the part. The build phase turns these into mock
      fit-checks.
-4. FEASIBILITY SELF-CHECK (arithmetic, before finalizing): for every pair of
-   explicit numbers that share the same local volume, wall, or print axis —
-   features stacked/spanning along one dimension, a cutout vs. the wall it
-   sits in, a cell/lattice pitch vs. the space that must contain it, a
-   coverage-area claim vs. the footprint left after other features are
-   subtracted — write out the sum/fit arithmetic and confirm it closes
-   inside the stated envelope. A brief that ships two numbers whose own
-   arithmetic does not fit is not caught by any later gate; it burns a full
-   build + repair budget before arbitration walks it back (draft-stack-dock,
-   2026-08-13: one arbitration round found FOUR such conflicts in a single
-   brief — 36 slots of 3.5mm needing 41.6mm of run in an 11.6mm span, a
-   10mm pocket inside a 2.4mm wall, a 55%/14000mm² deck-coverage claim
-   against a ~12217mm² reachable ceiling, and a 12mm lattice cell
-   inside a 2mm wall). If a number does not fit, relax ONE of the
-   conflicting numbers now, in the brief — do not ship the conflict for
-   BUILD or arbitration to discover later at higher cost.
 
 Do NOT write any code. When brief.md exists, reply with ONE line: the product title."""
 
@@ -207,12 +161,7 @@ Then read `{HERE}/blocks/BLOCKS.md` — use a golden block wherever one happens 
 fit a shape the brief already calls for (they are testbench-verified and save
 gate rounds), but NEVER let the block vocabulary decide the design: the blocks
 cover boring primitives, and building the geometry the brief actually asks for
-is the job. Your sandbox cannot `import` across the project boundary, so COPY
-`{HERE}/blocks/cadblocks.py` into `{out_dir}/` and import it locally instead
-of hand-reimplementing a block from memory — reimplementing drifts from the
-testbench-verified version and burns turns (draft-stack-dock rewrote
-`rounded_box` by hand instead of copying it; terminal-cursor-pen-holder
-copied the file verbatim and it just worked).
+is the job.
 Then read `{CADCODE}/SKILL.md` IN FULL and follow its loop and non-negotiables,
 using its cadlib helpers. This is a "new part" task.
 The cad tool: `{CAD_CMD}`
@@ -222,17 +171,11 @@ The cad tool: `{CAD_CMD}`
  "silhouette; fix geometry rigor, printability, dimensions) rather than starting "
  "from scratch." if (out_dir / "main.py").is_file() else ""}
 {f"CONCEPT — `{out_dir}/concept.png` is what the human approved, and it is the "
- "target for silhouette, part count and overall character: a dedicated LIKENESS "
- "lens will re-render your final geometry and compare it against this image, "
- "and silhouette drift FAILS the run. It is a generated photograph, so take "
- "SHAPE from it and nothing else — every explicit number comes from brief.md, "
- "and the printability non-negotiables below outrank both. Build the printable "
- "version of that object, not a shell that photographs like it. GET THE "
- "SILHOUETTE RIGHT FIRST: as soon as the first assembled export exists, render "
- f"it (`{REVIEW_CMD}`), READ the render next to concept.png, and fix stance, "
- "proportions and the big recognisable masses BEFORE any detail work or gate "
- "polishing — a session that dies mid-build must die with the concept's shape "
- "already in place, not with polished detail on the wrong silhouette."
+ "target for silhouette, part count and overall character: the fidelity lens "
+ "scores you against it. It is a generated photograph, so take SHAPE from it "
+ "and nothing else — every explicit number comes from brief.md, and the "
+ "printability non-negotiables below outrank both. Build the printable version "
+ "of that object, not a shell that photographs like it."
  if (out_dir / "concept.png").is_file() else ""}
 {"VISUAL CONTRACT — the human approved this design from the renders in "
  f"`{out_dir}/reference/`. Read EVERY image there BEFORE writing code. After each "
@@ -251,10 +194,6 @@ OUTPUT — build the project in `{out_dir}`:
 - `{out_dir}/part_colors.json`: {{"<part_name>.stl": "#rrggbb"}} from those same
   rows. The platform viewer paints the model from exactly these two artifacts,
   so a missing part file ships as an unpainted white part.
-- `{out_dir}/camera.json`: {{"elev": <deg>, "azim": <deg>}} — the mplot3d view
-  that best matches the concept photo's viewpoint (eyeball it from your own
-  renders; iso default is elev 24, azim -58). The review script renders the
-  colored assembly from this camera so likeness judges compare like-for-like.
 - renders via `{REVIEW_CMD}`
 
 Printability non-negotiables: EVERY part is one connected watertight solid, min
@@ -292,10 +231,6 @@ LENSES = {
                  "NOTHING about material, colour, lighting or finish: it is a "
                  "photograph and the renders are flat-shaded CAD, so that gap is the "
                  "renderer, not the model."),
-    "likeness": ("Judge ONLY visual likeness to the approved concept image: silhouette, "
-                 "proportions, feature presence and placement. The build must read as "
-                 "the SAME OBJECT as the concept at a glance — a stranger shown both "
-                 "should say they are the same product."),
     "sellability": ("Judge ONLY first-sight desire: would a stranger stop scrolling and "
                     "want this? Striking silhouette, visible mechanism, something they "
                     "have not seen before. Hard to categorise is NOT a defect — generic, "
@@ -304,32 +239,14 @@ LENSES = {
 
 
 def lens_prompt(slug: str, out_dir: Path, lens: str) -> str:
-    if lens == "likeness":
-        ref = out_dir / "reference" / "concept.png"
-        concept = ref if ref.is_file() else out_dir / "concept.png"
-        method = f"""The harness re-rendered the CURRENT geometry into `{slug}_review/` just
-before this session — the renders on disk are fresh. Do NOT re-render, do NOT
-run the review script. READ (view) `{slug}_review/_parts_colored.png` (if it
-exists — the assembly with each part in its brief color, so a missing part is a
-missing COLOR: name it) plus `{slug}_review/_assembled.png` and
-`{slug}_review/_qa.png` next to `{concept}` and compare them directly. Do NOT
-edit part files — verdict only.
+    return f"""{HEADLESS_WARNING}
 
-This lens is VISUAL-ONLY: judge silhouette, overall proportions, feature
-presence/placement and part character — would a stranger say these show the
-SAME OBJECT? The concept is a generated photograph and the renders are
-flat-shaded CAD, so material, colour, lighting, background and camera framing
-score NOTHING. Do not read brief.md, params.py or any source code, and do not
-run trimesh — the fidelity lens owns numbers; you own the LOOK.
+You are ONE independent lens of a review panel for the part in `{out_dir}`.
+Other lenses run separately — judge NOTHING outside your lens.
 
-WRITE `review_{lens}.md` THE MOMENT you have compared those three images —
-verdict line first, then one line per divergence: what the concept shows vs
-what the model shows, concrete enough for a repair session to act on (e.g.
-"concept: angled skeleton stock dropping below the receiver; model: flat
-straight loop"). Only after that file exists may you open further part renders
-and append detail."""
-    else:
-        method = f"""Read `brief.md`, `gate.json`, and EVERY render in `{slug}_review/` (re-render
+YOUR LENS — {lens.upper()}: {LENSES[lens]}
+
+Read `brief.md`, `gate.json`, and EVERY render in `{slug}_review/` (re-render
 with `{REVIEW_CMD}` if none exist). Do NOT edit part files — verdict only.
 
 MEASURE BEFORE YOU CLAIM: renders lie (z-fighting, camera, mplot3d artifacts).
@@ -339,22 +256,9 @@ trimesh on the STL, or the numbers in `params.py`/`main.py` — and the finding
 must state the measured number and how you measured it. A claim your own
 measurement contradicts must not be written. Visual-only findings are allowed
 solely for cosmetic issues (render artifacts, colors, surface look).
-MEMORY RULE (hard): measure STLs ONE AT A TIME, each in its OWN short python
-invocation — never load every part (or the assembled mesh plus parts) into a
-single process. A 14-part all-at-once trimesh load hit 14.8GB and the kernel
-OOM-killed the entire pipeline (2026-08-16); the phase now runs under a hard
-rlimit, so an all-at-once load will die with MemoryError anyway.
 If `arbitration.md` exists, read it FIRST: claims it refuted with measurements
 must not be re-raised unless your own new measurement disagrees — a prior
-panel burned repair rounds chasing two measurably-false findings."""
-    return f"""{HEADLESS_WARNING}
-
-You are ONE independent lens of a review panel for the part in `{out_dir}`.
-Other lenses run separately — judge NOTHING outside your lens.
-
-YOUR LENS — {lens.upper()}: {LENSES[lens]}
-
-{method}
+panel burned repair rounds chasing two measurably-false findings.
 Write `review_{lens}.md`: its FIRST line must be `Verdict: PASS <score>/10`
 or `Verdict: FAIL <score>/10 <one-sentence reason>` — <score> grades how close
 the part is to passing YOUR lens (10 = flawless, 8 = minimum pass, one decimal
@@ -399,50 +303,14 @@ def scores_improving(out_dir: Path) -> bool:
     return bool(pairs) and all(a is not None and b is not None and b > a for a, b in pairs)
 
 
-def render_fresh(slug: str, out_dir: Path) -> bool:
-    """Re-render the current geometry before the likeness lens runs: the lens
-    must judge what the STLs are NOW, not a stale render from before a repair.
-    Done harness-side because the lens's first live test burned 8 of its turns
-    rediscovering the review script's CLI and 10 wall-minutes waiting on it."""
-    err = ""
-    try:
-        # phase_env(), not os.environ: uv lives in /root/.local/bin, which only
-        # phase_env puts on PATH — a bare env dies with FileNotFoundError
-        r = subprocess.run(REVIEW_CMD.split() + [".", "--stem", slug],
-                           cwd=out_dir, capture_output=True, text=True,
-                           timeout=1800, env=phase_env())
-        ok = r.returncode == 0
-        err = (r.stderr or r.stdout or "")[-300:]
-    except Exception as e:
-        ok, err = False, str(e)[-300:]
-    print(f"[render] {'fresh renders for likeness' if ok else 'RENDER FAILED — likeness judges existing renders: ' + err.replace(chr(10), ' ')}",
-          flush=True)
-    return ok
-
-
 def run_panel(slug: str, out_dir: Path, run_log: dict, lenses=None) -> dict:
     """Independent lens sessions, separate contexts (circuit-style panel)."""
     results = dict(run_log.get("panel") or {})
-    has_concept = (out_dir / "reference" / "concept.png").is_file() or \
-                  (out_dir / "concept.png").is_file()
     for lens in (lenses or LENSES):
-        if lens == "likeness" and not has_concept:
-            continue  # nothing approved to be like — plain prompt-only run
-        if lens == "likeness":
-            render_fresh(slug, out_dir)
         f = out_dir / f"review_{lens}.md"
-        turns = 20 if lens == "likeness" else 45  # likeness reads 3 images, no trimesh
         mtime_before = f.stat().st_mtime if f.is_file() else None
-        r = run_phase(f"lens-{lens}", lens_prompt(slug, out_dir, lens), out_dir, turns, run_log, timeout_s=2400)
+        r = run_phase(f"lens-{lens}", lens_prompt(slug, out_dir, lens), out_dir, 45, run_log, timeout_s=2400)
         results[lens] = lens_verdict(out_dir, lens, r, mtime_before)
-        if results[lens] == "FAIL no output":
-            # a crashed lens must never decide the ship (fidelity died 3 of 4
-            # rounds on 08-13 and ~50% of attempts since; the run shipped
-            # off-concept because of it) — one retry, then the FAIL stands
-            mtime_before = f.stat().st_mtime if f.is_file() else None
-            r = run_phase(f"lens-{lens}-retry", lens_prompt(slug, out_dir, lens),
-                          out_dir, turns, run_log, timeout_s=2400)
-            results[lens] = lens_verdict(out_dir, lens, r, mtime_before)
     hist_f = out_dir / "panel_history.json"
     try:
         hist = json.loads(hist_f.read_text(encoding="utf-8"))
@@ -511,11 +379,11 @@ N_JUDGES = 3
 def blacklist_block(found: list) -> str:
     if not found:
         return ""
-    lines = "\n".join(f"- {slug} — {why}" for slug, why in found)
-    return ("\n\nDEAD CANDIDATES — the previous round proposed these and every one "
-            "was killed (found on the market, or the human already rejected it). "
-            "Do not propose them, and do not propose their neighbours; go "
-            "somewhere the search could not reach:\n" + lines)
+    lines = "\n".join(f"- {slug} — already for sale: {url}" for slug, url in found)
+    return ("\n\nALREADY FOR SALE — the previous round proposed these and the judges "
+            "found every one of them on the market. Do not propose them, and do not "
+            "propose their neighbours; go somewhere the search could not reach:\n"
+            + lines)
 
 
 def propose_prompt(lane: str, out_dir: Path, trend_files: list, found: list = ()) -> str:
@@ -526,21 +394,10 @@ You are ONE of three independent PROPOSE agents in a text-to-CAD product
 pipeline. The pipeline ships ONE product per day, so this shortlist is the whole
 day's output — a safe pick wastes every phase downstream.
 
-THE BAR — exactly two requirements, nothing more: (1) CREATIVE — a twist a
-shopper has not seen, even on a familiar product type; (2) NOT FOR SALE —
-judges will search Amazon, Etsy, Printables, Thingiverse and MakerWorld for
-every candidate you send, and any candidate they find a real listing for is
-killed on the spot, whatever it scores. Familiar archetypes with a creative
-twist are WELCOME — think "gear-driven robot-arm claw toy": every mechanism in
-it is a well-known, forgiving archetype (spur gears, pin joints, turntable,
-claw), yet the combination is its own product. Obscurity is NOT a requirement
-and earns nothing.
-
-FORGIVING-MECHANISM RULE (hard): the product must still WORK when every printed
-dimension is off by 0.5mm. Any candidate whose FUNCTION depends on precision —
-optical alignment, metrology accuracy, fine threads, sub-mm fits, calibrated
-scales — dies in FDM plus generated CAD; do not propose it. Visible motion a
-buyer understands in two seconds beats a clever function that needs explaining.
+THE BAR: a product that does not exist yet. Not "a fresh take on", not "better
+than" — a thing a shopper cannot find for sale. Judges will search Amazon, Etsy,
+Printables, Thingiverse and MakerWorld for every candidate you send, and any
+candidate they find a real listing for is killed on the spot, whatever it scores.
 {discover_lessons_block()}{taste_block()}{blacklist_block(list(found))}
 
 {trend_source_block(trend_files)}
@@ -611,20 +468,12 @@ the only thing that counts as a find.
 THEN score EVERY candidate 0-10 on four axes:
 - novelty — distance from the nearest thing that DOES exist. 10 = nothing in the
   neighbourhood; 5 = clearly adjacent to something on sale; 0 = a restyle of it.
-  A 5 is NOT a defect — the exists-gate above already guarantees the product is
-  not for sale; do not reward obscurity for its own sake. Familiar archetype +
-  creative twist scores the twist.
 - desire — 10 = a stranger wants it before they can explain why. Score WANTING,
-  not naming. Visible motion a buyer understands in two seconds is a plus;
-  a function that needs a paragraph to explain is a minus.
+  not naming. Hard to classify is not a defect; safe and generic is.
 - buildable — 10 = modelable in CadQuery and printable unattended on an FDM
-  machine, AND still functional when every dimension is off by 0.5mm. Score 4 or
-  below for any candidate whose FUNCTION depends on precision (optical
-  alignment, metrology accuracy, fine threads, sub-mm fits, calibrated scales) —
-  FDM plus generated CAD cannot deliver it. Part COUNT is not a buildability
-  problem: twelve forgiving archetype mechanisms (gears, hinges, claws,
-  turntables) that each print fine is a 9; one precision-critical function is
-  a 3 no matter how few parts it has.
+  machine. Below 4 means genuinely impossible, not merely difficult. Part COUNT
+  is not a buildability problem: twelve parts that each print fine is a 9, and
+  scoring it down for being ambitious is the error this axis keeps making.
 - craft — component density and mechanical richness. 10 = an assembly you could
   stare at, many distinct parts each visibly doing a job, like a watch movement
   or a film camera; 5 = a sound mechanism in a plain housing; 1 = a simple solid
@@ -681,19 +530,6 @@ def parse_scores(out_dir: Path) -> dict:
     return scores
 
 
-def rejected_slugs() -> dict:
-    """slug -> reason for every `- REJECTED '<slug>': ...` line in
-    discover_lessons.md. A human NO is a harder kill than a marketplace find —
-    2026-08-13 the panel re-picked one-twist-coffee-doser after Tam had rejected
-    it and --auto built it anyway."""
-    f = HERE / "discover_lessons.md"
-    if not f.is_file():
-        return {}
-    return {m.group(1).lower(): m.group(2).strip()
-            for m in re.finditer(r"^-\s*REJECTED\s+'([^']+)'\s*:\s*(.*)$",
-                                 f.read_text(encoding="utf-8"), re.M)}
-
-
 def parse_exists(out_dir: Path) -> dict:
     """slug -> first evidence URL a judge opened. A bare `yes` with no URL is
     not evidence and is ignored: the whole point of the gate is that a find can
@@ -717,32 +553,23 @@ def pick_winner(out_dir: Path) -> str:
     """
     cands, scores = parse_candidates(out_dir), parse_scores(out_dir)
     found = parse_exists(out_dir)
-    rejected = {s: r for s, r in rejected_slugs().items() if s in cands}
     ranked = []
     for slug, c in cands.items():
         votes = scores.get(slug)
-        if not votes or slug in found or slug in rejected:
+        if not votes or slug in found:
             continue
         nov, des, bui, cra = (statistics.median([v[i] for v in votes]) for i in range(4))
-        # 2026-08-15: objective is desire+buildable+craft — novelty is only a
-        # creativity FLOOR (the exists-gate already enforces "not for sale").
-        # Optimizing novelty picked precision instruments the build stage can't
-        # deliver (shadow-moire-contour-bench: $56, likeness 2/10, no product).
         ranked.append({"slug": slug, "c": c, "n": nov, "d": des, "b": bui, "k": cra,
-                       "sum": des + bui + cra, "votes": len(votes)})
+                       "sum": nov + des + cra, "votes": len(votes)})
     if not ranked:
-        scored = [c for c in cands if c in scores]
-        if scored and all(c in found or c in rejected for c in scored):
-            return ""  # everything is for sale or human-rejected — caller re-proposes
+        if cands and len(found) >= len([c for c in cands if c in scores]) > 0:
+            return ""  # everything is already for sale — caller re-proposes
         raise SystemExit(f"ABORT: {len(cands)} candidates, {len(scores)} scored — "
                          f"panel produced nothing rankable")
     craft_min = int(os.environ.get("CRAFT", "6"))
-    novelty_min = int(os.environ.get("NOVELTY_MIN", "5"))
-    buildable_min = int(os.environ.get("BUILDABLE_MIN", "7"))
-    ranked.sort(key=lambda r: (r["sum"], r["b"]), reverse=True)
+    ranked.sort(key=lambda r: (r["sum"], r["n"]), reverse=True)
     eligible = [r for r in ranked
-                if r["n"] >= novelty_min and r["b"] >= buildable_min
-                and r["k"] >= craft_min]
+                if r["n"] >= 7 and r["b"] >= 4 and r["k"] >= craft_min]
     win = (eligible or ranked)[0]
 
     rows = "\n".join(
@@ -753,13 +580,8 @@ def pick_winner(out_dir: Path) -> str:
         rows += "\n" + "\n".join(
             f"| ~~{slug}~~ | — | — | — | — | — | — | — | KILLED, already for sale: {url} |"
             for slug, url in found.items())
-    if rejected:
-        rows += "\n" + "\n".join(
-            f"| ~~{slug}~~ | — | — | — | — | — | — | — | KILLED, human rejected earlier: {reason} |"
-            for slug, reason in rejected.items())
-    warn = "" if eligible else (f"\n\n⚠ WEAK ROUND: nothing cleared "
-                                f"novelty>={novelty_min}, buildable>={buildable_min} "
-                                f"and craft>={craft_min} — shipping "
+    warn = "" if eligible else ("\n\n⚠ WEAK ROUND: nothing cleared novelty>=7, "
+                                f"buildable>=4 and craft>={craft_min} — shipping "
                                 "the best of a weak field.")
     text = f"""# Discover panel — {len(cands)} candidates, {N_JUDGES} judges
 
@@ -768,8 +590,7 @@ def pick_winner(out_dir: Path) -> str:
 {rows}
 
 Scores are medians over independent judges; the winner is the highest
-desire+buildable+craft clearing novelty>={novelty_min}, buildable>={buildable_min}
-and craft>={craft_min} (novelty is a creativity floor, not the objective).{warn}
+novelty+desire+craft clearing novelty>=7, buildable>=4 and craft>={craft_min}.{warn}
 
 WINNER: {win['slug']}
 
@@ -818,12 +639,9 @@ def run_discover_panel(out_dir: Path, trend_files: list, run_log: dict) -> str:
         text = pick_winner(out_dir)
         if text:
             return text
-        cands = parse_candidates(out_dir)
-        found += [(s, f"already for sale: {u}") for s, u in parse_exists(out_dir).items()]
-        found += [(s, f"the human already rejected it: {r}")
-                  for s, r in rejected_slugs().items() if s in cands]
-        print(f"panel round {rnd}: every candidate is dead (for sale or "
-              f"human-rejected, {len(found)} total) — re-proposing", flush=True)
+        found += list(parse_exists(out_dir).items())
+        print(f"panel round {rnd}: every candidate is already for sale "
+              f"({len(found)} listings) — re-proposing", flush=True)
     raise SystemExit("ABORT: every candidate across "
                      f"{MAX_PANEL_ROUNDS} rounds is already for sale — no product today")
 
@@ -855,13 +673,6 @@ assembled pose in that one export — correct silhouette, every feature visibly
 present, sane proportions. Per-part files come later at BUILD; a draft only has
 to look right. Draft quality bar: it must look right in
 renders; do not spend turns chasing perfect fillets or gate metrics.
-
-EXPORT-FIRST DISCIPLINE (hard): within your FIRST 12 turns, have a rough
-assembled `{slug}.stl` on disk and `{slug}_review/_assembled.png` rendered —
-blocky placeholder proportions are fine. Only then spend the remaining turns
-refining parts and re-rendering. Drafts that die at the turn limit with ZERO
-exports waste the whole phase; a crude exported draft is always worth more
-than a perfect unexported one.
 
 Then render the FULL set with `{REVIEW_CMD}` and ensure at least these exist in
 `{out_dir}/{slug}_review/`: `_assembled.png` (hero), `_qa.png` (multi-view grid),
@@ -1091,7 +902,7 @@ def fail_tier(fails: list) -> str:
     fl = " ".join(map(str, fails or []))
     if any(k in fl for k in ("not_watertight", "bodies=", "no_stl", "lint:")):
         return "broken"
-    if any(k in fl for k in ("print_time=", "slice_failed", "overhang=", "lens:printability", "lens:fidelity", "lens:likeness")):
+    if any(k in fl for k in ("print_time=", "slice_failed", "overhang=", "lens:printability", "lens:fidelity")):
         return "functional"
     return "cosmetic"
 
@@ -1126,89 +937,6 @@ def run_arbitration(slug: str, out_dir: Path, fails: list, tier: str,
         run_log["escalated"] = {"tier": tier, "fails": fails}
     print(msg)
     telegram_send_text(msg)
-
-
-BUILD_TURNS = 120
-
-
-def run_build(slug: str, out_dir: Path, run_log: dict) -> None:
-    """BUILD with a mid-point likeness milestone.
-
-    The 08-14 run (arc-coil-blaster-prop) spent its whole budget on detail and
-    only learned at the END-of-cycle panel that the grip, guard and stock were
-    off-concept — 17 hours and the repair budget gone before the first likeness
-    verdict. So: half the budget, then a cheap likeness lens on the current
-    geometry, then the second half with that verdict injected — silhouette
-    failures now cost half a build, not a whole cycle."""
-    has_concept = (out_dir / "concept.png").is_file() or \
-                  (out_dir / "reference" / "concept.png").is_file()
-    if not has_concept:
-        run_phase("build", build_prompt(slug, out_dir), out_dir, BUILD_TURNS,
-                  run_log, timeout_s=10800)
-        return
-    r1 = run_phase("build", build_prompt(slug, out_dir), out_dir, BUILD_TURNS // 2,
-                   run_log, timeout_s=5400)
-    done = (r1 or "").strip().splitlines()[-1].startswith("DONE") if (r1 or "").strip() else False
-    if list(out_dir.glob("*.stl")):
-        render_fresh(slug, out_dir)
-        f = out_dir / "review_likeness.md"
-        mtime = f.stat().st_mtime if f.is_file() else None
-        r = run_phase("build-likeness-check", lens_prompt(slug, out_dir, "likeness"),
-                      out_dir, 20, run_log, timeout_s=2400)
-        verdict = lens_verdict(out_dir, "likeness", r, mtime)
-        if verdict == "FAIL no output":
-            # "no output" is an agent CRASH, not a content verdict (lessons.md,
-            # three recurrences) — retry once, like the panel already does.
-            r = run_phase("build-likeness-check-retry",
-                          lens_prompt(slug, out_dir, "likeness"),
-                          out_dir, 20, run_log, timeout_s=2400)
-            verdict = lens_verdict(out_dir, "likeness", r, mtime)
-        run_log["build_milestone"] = verdict
-        print(f"[build-milestone] likeness: {verdict}", flush=True)
-        # 2026-08-15: a hopeless silhouette is not repairable in half a budget —
-        # shadow-moire scored 2/10 at milestone, then burned $8 build2 + panel
-        # anyway. Below the threshold, kill the whole run now.
-        m_score = re.search(r"FAIL\s+(\d+(?:\.\d+)?)\s*/\s*10", verdict)
-        abort_below = float(os.environ.get("MILESTONE_ABORT_BELOW", "4"))
-        if m_score and float(m_score.group(1)) < abort_below:
-            run_log["build_aborted"] = (
-                f"milestone likeness {m_score.group(1)}/10 < {abort_below:g} — "
-                "silhouette unsalvageable, build2/gate/panel skipped to save budget")
-            print(f"[build-milestone] ABORT RUN: {run_log['build_aborted']}", flush=True)
-            return
-        if verdict.startswith("PASS") and done:
-            return  # silhouette approved and the build already declared DONE
-        if verdict.startswith("PASS"):
-            note = ("\n\nMILESTONE — a likeness lens PASSED the current silhouette "
-                    f"({verdict}). Do NOT regress it: finish detail, per-part "
-                    "exports, part_colors.json and fit_checks.py.")
-        elif verdict == "FAIL no output":
-            # Crashed twice: the milestone is INCONCLUSIVE. Never inject the
-            # stale findings file — 2026-08-16 a crashed lens fell through to
-            # this branch and build2 was handed the PREVIOUS run's 2/10
-            # findings, with orders to destroy an already-DONE correct model.
-            if done:
-                print("[build-milestone] lens crashed twice and the build is "
-                      "DONE — skipping build2", flush=True)
-                return
-            note = ("\n\nMILESTONE — the likeness lens crashed twice, so there "
-                    "is no silhouette verdict this round. Keep matching the "
-                    "approved renders in reference/ and finish the build: "
-                    "detail, per-part exports, part_colors.json, fit_checks.py.")
-        else:
-            # Only trust findings the lens ACTUALLY wrote this round — a stale
-            # review_likeness.md describes a previous geometry.
-            fresh = f.is_file() and (mtime is None or f.stat().st_mtime > mtime)
-            findings = f.read_text(encoding="utf-8") if fresh else verdict
-            note = ("\n\nMILESTONE LIKENESS CHECK FAILED at half budget — fix the "
-                    "silhouette findings below BEFORE any detail or gate work; a "
-                    "finished part with the wrong shape fails the run:\n" + findings)
-    else:
-        note = ("\n\nMILESTONE — half the build budget is spent and NO assembled "
-                "STL exists yet. Export the assembled silhouette FIRST (rough is "
-                "fine), render it, compare against the concept, then continue.")
-    run_phase("build2", build_prompt(slug, out_dir) + note, out_dir,
-              BUILD_TURNS // 2, run_log, timeout_s=5400)
 
 
 def run_gate(out_dir: Path, no_slice: bool) -> dict:
@@ -1295,21 +1023,6 @@ def main() -> int:
             print("ABORT: brief.md was not produced"); return 1
         run_phase("draft", draft_prompt(slug, out_dir), out_dir, 45, run_log, timeout_s=3600)
         rd = out_dir / f"{slug}_review"
-        if not (rd / "_assembled.png").is_file():
-            # 2026-08-15: two drafts in a row hit the turn cap with zero
-            # exports and the proposal went out render-less. One corrective
-            # retry, alert either way so a silent draft death is visible.
-            telegram_send_text(f"{slug}: draft died with no renders — one retry "
-                               "with export-first note")
-            run_phase("draft2", draft_prompt(slug, out_dir) +
-                      f"\n\nRETRY — the previous draft session hit its turn limit "
-                      f"with NO export on disk. Do not repeat that: produce "
-                      f"`{slug}.stl` and `_assembled.png` at placeholder quality "
-                      f"within your first 10 turns, then refine only with what "
-                      f"remains.", out_dir, 45, run_log, timeout_s=3600)
-            if not (rd / "_assembled.png").is_file():
-                telegram_send_text(f"text2cad {slug}: draft failed TWICE — "
-                                   f"proposal goes out without renders; check {out_dir}")
         for src, dst in ((rd / "_assembled.png", "hero.png"), (rd / "_qa.png", "parts.png")):
             if src.is_file():
                 (out_dir / dst).write_bytes(src.read_bytes())
@@ -1322,18 +1035,6 @@ def main() -> int:
             (ref / "concept.png").write_bytes(concept.read_bytes())
         print(f"reference set: {len(list(ref.glob('*.png')))} approved renders for the build phase")
         print(telegram_send_proposal(out_dir, slug))
-        # 2026-08-16: demo video rides a DETACHED process — the H3 gateway can
-        # cold-start 35+ minutes and the cycle must never await it. The script
-        # polls, retries and telegrams the finished clip entirely on its own.
-        try:
-            (HERE / "logs").mkdir(exist_ok=True)
-            vlog = (HERE / "logs" / f"video-{slug}.log").open("a")
-            subprocess.Popen([sys.executable, str(HERE / "gen_demo_video.py"),
-                              slug], cwd=HERE, stdout=vlog,
-                             stderr=subprocess.STDOUT, start_new_session=True)
-            print(f"demo video: detached (logs/video-{slug}.log)")
-        except Exception as e:
-            print(f"demo video: spawn failed (non-fatal): {e}")
         (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
         total = sum(e.get("cost_usd") or 0 for e in run_log.values() if isinstance(e, dict) and "cost_usd" in e)
         print(f"\n== PROPOSAL READY: {slug} (${total:.2f})")
@@ -1383,23 +1084,6 @@ def main() -> int:
             run_log = json.loads((out_dir / "run.json").read_text(encoding="utf-8")) \
                 if (out_dir / "run.json").is_file() else {"slug": slug}
             print(f"== text2cad GO (human-approved): {slug} -> {out_dir}")
-            # 2026-08-16: the human GOes the PROPOSAL — the draft renders —
-            # so from GO onward the approved draft hero IS the likeness
-            # target. Keeping the pre-draft AI concept.png as the anchor
-            # scored a correct upright build 2/10 against the obsolete
-            # horizontal concept photo and sent build2 off to destroy the
-            # approved layout (one-way-newsreel). Original kept alongside.
-            hero, concept = out_dir / "hero.png", out_dir / "concept.png"
-            if hero.is_file() and concept.is_file():
-                orig = out_dir / "concept_orig_ai.png"
-                if not orig.is_file():
-                    orig.write_bytes(concept.read_bytes())
-                concept.write_bytes(hero.read_bytes())
-                ref = out_dir / "reference" / "concept.png"
-                if ref.parent.is_dir():
-                    ref.write_bytes(hero.read_bytes())
-                print("GO: likeness anchor = approved draft hero "
-                      "(concept.png swapped; original -> concept_orig_ai.png)")
         else:
             run_log = {"prompt": args.prompt, "slug": slug}
             print(f"== text2cad: {slug} -> {out_dir}")
@@ -1408,13 +1092,7 @@ def main() -> int:
             if not (out_dir / "brief.md").is_file():
                 print("ABORT: brief.md was not produced"); return 1
 
-        run_build(slug, out_dir, run_log)
-        if run_log.get("build_aborted"):
-            (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
-            telegram_send_text(f"text2cad {slug}: RUN ABORTED early — "
-                               f"{run_log['build_aborted']}")
-            print(f"\n== ABORT {slug}: {run_log['build_aborted']}")
-            return 1
+        run_phase("build", build_prompt(slug, out_dir), out_dir, 120, run_log, timeout_s=10800)
         if not list(out_dir.glob("*.stl")):
             print("ABORT: no .stl produced"); return 1
 
@@ -1428,20 +1106,18 @@ def main() -> int:
 
     spent = {t: 0 for t in TIER_BUDGET}
     attempt = 0
-    bonus_granted = {t: False for t in TIER_BUDGET}
+    bonus_granted = False
     while not (run_log["gate"].get("pass") and not lens_fails):
         fails = (run_log["gate"].get("fails") or []) + lens_fails or ["unknown"]
         tier = fail_tier(fails)
+        if spent[tier] >= TIER_BUDGET[tier] + (1 if bonus_granted else 0):
+            run_arbitration(slug, out_dir, fails, tier, spent[tier], run_log)
+            break
         if spent[tier] >= TIER_BUDGET[tier]:
-            # one bonus repair per tier, and only while that tier is still
-            # climbing. Previously this was two guards whose conditions were
-            # identical before any bonus (spent >= budget + 0 vs spent >=
-            # budget), so the first guard always won and the bonus was
-            # unreachable dead code.
-            if bonus_granted[tier] or not scores_improving(out_dir):
+            if not scores_improving(out_dir):
                 run_arbitration(slug, out_dir, fails, tier, spent[tier], run_log)
                 break
-            bonus_granted[tier] = True
+            bonus_granted = True
             telegram_send_text(f"{slug}: budget exhausted but failing lens scores "
                                f"still climbing — granting 1 bonus repair")
         spent[tier] += 1
@@ -1458,11 +1134,6 @@ def main() -> int:
                             tier, spent[tier], run_log)
             break
         run_log["gate"] = run_gate(out_dir, args.no_slice)
-        # immediate heads-up the moment the repair session ends — the photo
-        # alert below only fires after the lens re-checks (~15 min later)
-        telegram_send_text(
-            f"{slug} repair{attempt} finished ({(verdict or '').strip().splitlines()[-1][:80] if (verdict or '').strip() else 'no reply — hit turn limit'}), "
-            f"gate={'PASS' if run_log['gate'].get('pass') else 'FAIL'} — re-judging failed lenses now, photo follows")
         if lens_fails:  # change-only rescore: re-run failed lenses, keep passed verdicts
             failed = [k for k in run_log["panel"] if not run_log["panel"][k].startswith("PASS")]
             run_log["panel"] = run_panel(slug, out_dir, run_log, lenses=failed)

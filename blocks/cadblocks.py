@@ -6,6 +6,8 @@ re-run the testbench. Contracts in BLOCKS.md.
 
 All dimensions in mm. Every function returns a cq.Workplane solid.
 """
+import math
+
 import cadquery as cq
 
 MIN_WALL = 1.6  # FDM floor enforced across all blocks
@@ -80,4 +82,69 @@ BLOCKS = {
     "angled_stand": angled_stand,
     "phone_slot_cutter": phone_slot_cutter,
     "snap_hook": snap_hook,
+}
+
+
+# ---------------------------------------------------------------------------
+# PROPOSED — NOT yet approved. Testbench-verified but not human-curated per
+# BLOCKS.md policy (needs Tam's review before moving into BLOCKS above).
+# Candidates surfaced 2026-08-16: each was independently hand-rolled in >=2
+# separate build directories this week (evidence in the weekly self-improve
+# commit), which is the "reimplemented, not merely used" signal BLOCKS.md
+# asks for before proposing composition-over-invention library additions.
+# ---------------------------------------------------------------------------
+
+def bounds_box(x0, x1, y0, y1, z0, z1):
+    """Axis-aligned box spanning explicit bounds rather than center+size —
+    the shape every build this week hand-rolled under a different name
+    (`box`, `lbox`, `wbox`, `xbox`, `box_range`) for fit-check mocks
+    (trimesh) and range-defined cutters/pads (CadQuery) alike: draft-stack-dock,
+    arc-coil-blaster-prop, finger-mirror-manipulator and terminal-cursor-pen-holder
+    each wrote their own copy. Returns a solid; use `.cut()` to subtract it as
+    a cutter, same as any other block here."""
+    assert x1 > x0 and y1 > y0 and z1 > z0, "bounds must be non-degenerate (x1>x0, y1>y0, z1>z0)"
+    return (cq.Workplane("XY")
+            .box(x1 - x0, y1 - y0, z1 - z0, centered=False)
+            .translate((x0, y0, z0)))
+
+
+def dovetail_tenon(throat=6.0, depth=6.0, length=20.0, angle_deg=30.0):
+    """Male dovetail tenon: trapezoidal cross-section (narrow at the root,
+    wide at the tip so it locks against pull-out), extruded along Y for
+    `length` (the joint's slide/insertion axis). `throat` = root width,
+    `depth` = radial extent from root to tip, `angle_deg` = taper half-angle
+    from the slide axis (30 => 60deg included, matching the two independent
+    hand-rolled joints this pattern was found in — aggressive enough to
+    retain, shallow enough to print without support along the taper).
+    Cross-section lives in XZ, centered on the slide axis (Y) and on X."""
+    assert throat >= 2 * MIN_WALL, f"throat must be >= {2 * MIN_WALL}mm"
+    assert 5.0 <= angle_deg <= 45.0, "angle_deg outside a printable dovetail range"
+    tip = throat + 2 * depth * math.tan(math.radians(angle_deg))
+    pts = [(-throat / 2, 0), (throat / 2, 0), (tip / 2, depth), (-tip / 2, depth)]
+    return (cq.Workplane("XZ").polyline(pts).close()
+            .extrude(length).translate((0, length / 2, 0)))
+
+
+def dovetail_socket_cutter(throat=6.0, depth=6.0, length=20.0, angle_deg=30.0,
+                           clearance=0.15):
+    """NEGATIVE volume: subtract from the mating part to cut a socket for
+    `dovetail_tenon` with the same params. `clearance` grows the throat and
+    depth uniformly (default 0.15mm/side, FDM-safe) for a printable sliding
+    fit — same clearance-by-growth approach as `phone_slot_cutter`, not a
+    true face-normal offset.
+
+    The mouth (z=0 in this cutter's local frame) must land ON a real face of
+    the host part — cutting it into the host's interior seals a void (FDM
+    antipattern, same as `hollow_box`'s warning). For the tenon to actually
+    slide together with the host afterward, the host must also leave at
+    least one end of the slide axis (Y) open past `length` — a host that
+    fully encloses the pocket on all sides is dimensionally correct (mates
+    with zero clash) but not physically assemblable as two rigid parts."""
+    return dovetail_tenon(throat + 2 * clearance, depth + clearance, length, angle_deg)
+
+
+PROPOSED_BLOCKS = {
+    "bounds_box": bounds_box,
+    "dovetail_tenon": dovetail_tenon,
+    "dovetail_socket_cutter": dovetail_socket_cutter,
 }
