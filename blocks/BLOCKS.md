@@ -21,6 +21,20 @@ and get re-approved.
 Print rules all blocks inherit: min wall 1.6mm, printable base-down without
 supports, one watertight solid per part.
 
+## Proposed blocks — NOT approved, pending Tam review
+
+Testbench-verified (`blocks/testbench.py`, `PROPOSED_CASES`) but not yet
+human-curated. Do not treat as library status until this section is merged
+above. Surfaced 2026-08-16 from this week's evidence: each pattern was
+independently hand-rolled (not merely used) in 2+ separate build directories,
+the same "reimplemented convergently" signal that motivated the original set.
+
+| Block | Returns | Contract | Evidence |
+|---|---|---|---|
+| `bounds_box(x0,x1,y0,y1,z0,z1)` | solid | Axis-aligned box from explicit bounds instead of center+size; also usable as a cutter via `.cut()`. | Hand-rolled under 5 different names (`box`, `lbox`, `wbox`, `xbox`, `box_range`) across draft-stack-dock, arc-coil-blaster-prop, finger-mirror-manipulator, terminal-cursor-pen-holder. |
+| `dovetail_tenon(throat=6,depth=6,length=20,angle_deg=30)` | solid | Male dovetail (narrow root, wide tip, extruded along Y). Root (mouth) at local z=0 must land on the mating part's real face — see cutter's docstring. | Independently authored (near-identical trapezoid taper) in finger-mirror-manipulator/geom.py and arc-coil-blaster-prop/geom.py. |
+| `dovetail_socket_cutter(...,clearance=0.15)` | NEGATIVE volume | Matching socket for `dovetail_tenon`. Host must leave the Y (slide) axis open past `length` at one end for real rigid-body assembly, or the fit is dimensionally correct but not insertable. | Same as above. |
+
 ## Composition rules (learned the hard way — 2 review rounds with Tam)
 - A cutter tilted PARALLEL to the face it should pierce stays buried at constant
   depth and never opens. Verify removed-volume fraction after every cut
