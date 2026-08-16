@@ -65,26 +65,10 @@ def main() -> int:
     print(f"[{today}] cycle start")
     env = dict(os.environ)
     env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
-    # 6h (was 3h): 08-14 and 08-15 both finished the build right at the 3h
-    # kill, so publish never ran and the whole spend was lost. On timeout,
-    # alert instead of dying with a silent traceback.
-    cycle_timeout = int(os.environ.get("CYCLE_TIMEOUT_S", str(6 * 3600)))
+    r = subprocess.run([str(HERE / "text2cad"), "--discover", "--auto"],
+                       cwd=HERE, env=env, capture_output=True, text=True,
+                       timeout=3 * 3600)
     log = LOGS / f"cycle-{today}.log"
-    try:
-        r = subprocess.run([str(HERE / "text2cad"), "--discover", "--auto"],
-                           cwd=HERE, env=env, capture_output=True, text=True,
-                           timeout=cycle_timeout)
-    except subprocess.TimeoutExpired as e:
-        out = e.stdout if isinstance(e.stdout, str) else ""
-        log.write_text((out or "") + f"\n--- KILLED: exceeded {cycle_timeout}s ---\n",
-                       encoding="utf-8")
-        marker.write_text("", encoding="utf-8")
-        msg = (f"text2cad autoloop STUCK [{today}]: cycle exceeded "
-               f"{cycle_timeout // 3600}h and was killed — no publish ran. "
-               f"Check {log} on panda.")
-        print(msg)
-        telegram(msg)
-        return 1
     log.write_text(r.stdout + "\n--- stderr ---\n" + r.stderr, encoding="utf-8")
     marker.write_text("", encoding="utf-8")
 
