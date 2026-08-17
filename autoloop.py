@@ -91,20 +91,35 @@ def main() -> int:
     # summarize from the tail of the run
     tail = "\n".join(r.stdout.strip().splitlines()[-6:])
     slug = cost = gate = "?"
+    ship = False
     for ln in r.stdout.splitlines():
         if ln.startswith("== DONE "):
             slug = ln.split()[2].rstrip(":")
             gate = "PASS" if "gate=PASS" in ln else "FAIL"
+            # `ship=` is the pipeline's own publish decision: gate PASS *and*
+            # every lens returned *and* none failed. Publishing on gate alone
+            # shipped one-way-newsreel with an empty panel — the mesh was
+            # provably printable and nothing had judged it against the concept.
+            ship = "ship=YES" in ln
         if "total LLM cost" in ln:
             cost = ln.split("$")[-1].split()[0]
-    status = "OK" if r.returncode == 0 and gate == "PASS" else "NEEDS ATTENTION"
+    status = "OK" if r.returncode == 0 and ship else "NEEDS ATTENTION"
     telegram(f"text2cad daily cycle [{status}]\n{tail[:2500]}")
 
     # green cycle -> import into Panda Social as DRAFT (human flips public)
-    if gate == "PASS" and slug not in ("?", ""):
+    if ship and slug not in ("?", ""):
         pub = subprocess.run([sys.executable, str(HERE / "publish.py"), slug],
                              cwd=HERE, capture_output=True, text=True, timeout=600)
         print("publish:", (pub.stdout or pub.stderr).strip()[-200:])
+    elif gate == "PASS" and slug not in ("?", ""):
+        # Held back deliberately, and said out loud: a silent skip here looks
+        # exactly like a publish that failed, and the run is worth reviewing by
+        # hand rather than losing.
+        msg = (f"text2cad {slug}: gate PASSED but NOT published — the panel did "
+               f"not clear it. Review out/{slug}/postmortem.md, then publish by "
+               f"hand with ./publish.py {slug} if you disagree.")
+        print(msg)
+        telegram(msg)
 
     # lessons tier auto-commit (code tier is improve.py's PR flow)
     changed = [f for f in LESSON_FILES
@@ -115,7 +130,7 @@ def main() -> int:
         p = sh(["git", "push"])
         print("lessons committed+pushed" if p.returncode == 0 else f"push failed: {p.stderr[-200:]}")
 
-    print(f"[{today}] cycle done: {slug} gate={gate} cost=${cost}")
+    print(f"[{today}] cycle done: {slug} gate={gate} ship={'YES' if ship else 'NO'} cost=${cost}")
     return 0
 
 
