@@ -14,6 +14,7 @@ Usage:
     ./phasecompare.py <slug> --journal logs/x.md   # also append a timestamped snapshot
 """
 import json
+import re
 import statistics
 import sys
 import time
@@ -104,7 +105,9 @@ def family(name: str) -> str:
     lens-fidelity-retry is the fidelity lens running a second time. Without
     this, every run invents new phase names and nothing ever has a baseline.
     """
-    n = name.removesuffix("-retry")
+    # run_phase keeps earlier attempts as "<name>#2", "<name>#3" so their cost
+    # is not lost; they are the same phase and belong in the same family.
+    n = re.sub(r"#\d+$", "", name).removesuffix("-retry")
     if n.startswith("repair"):
         return "repair"
     if n.startswith("build-likeness-check"):
@@ -140,16 +143,25 @@ def baseline(runs: dict, exclude: str = "") -> dict:
             # run against a mixture it never belonged to. Keep a per-model split
             # and prefer it whenever there is enough of it to mean anything.
             m = f["by_model"].setdefault(e.get("model") or "?", {"wall": [], "turns": [], "cost": []})
-            for key, val in (("wall", e.get("wall_s")), ("turns", e.get("num_turns")),
-                             ("cost", e.get("cost_usd"))):
-                if val:
-                    m[key].append(val)
-            if e.get("wall_s"):
-                f["wall"].append(e["wall_s"])
-            if e.get("cost_usd"):
-                f["cost"].append(e["cost_usd"])
+            if not starved(name, e)[0]:
+                for key, val in (("wall", e.get("wall_s")), ("turns", e.get("num_turns")),
+                                 ("cost", e.get("cost_usd"))):
+                    if val:
+                        m[key].append(val)
+            # A starved phase was CUT OFF, so its wall time and turn count
+            # measure when we killed it, not how long the work takes. Today's
+            # completed draft got flagged "2.0x SLOW" against a median built
+            # from seven drafts that all died at the cap — comparing finished
+            # work against corpses. Keep them out of the medians; the cap-hit
+            # column still counts them.
+            hit, _known = starved(name, e)
+            if not hit:
+                if e.get("wall_s"):
+                    f["wall"].append(e["wall_s"])
+                if e.get("cost_usd"):
+                    f["cost"].append(e["cost_usd"])
             nt = e.get("num_turns")
-            if nt:
+            if nt and not hit:
                 f["turns"].append(nt)
             if e.get("is_error"):
                 f["errored"] += 1
