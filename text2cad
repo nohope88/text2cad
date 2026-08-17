@@ -62,6 +62,14 @@ def phase_env() -> dict:
     # cycle (and nearly the 15GB box) with it — a MemoryError inside one export
     # is repairable, a dead pipeline is not.
     env.setdefault("CADPY_MEM_LIMIT_MB", os.environ.get("CADPY_MEM_LIMIT_MB", "10240"))
+    # 2026-08-17: BUILD spent its last hour on four ~15-minute attempts that each
+    # died with "Claude's response exceeded the 64000 output token maximum",
+    # producing nothing and burning $8.85. The largest tool call in that phase
+    # was 296 characters, so the budget went on reasoning, not on writing files.
+    # The error message names this variable as the control; raise it so a long
+    # planning turn on a 14-part assembly has room to land.
+    env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+                   os.environ.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "128000"))
     key = env.get("PANDA_DEV_KEY", "").strip()
     url = env.get("PROXY_URL", "").strip()
     if key and url:
@@ -1250,6 +1258,32 @@ ARB_TURNS = int(os.environ.get("ARB_TURNS", "60"))
 DISCOVER_TURNS = int(os.environ.get("DISCOVER_TURNS", "40"))
 
 
+def concept_ref_independent(out_dir: Path) -> bool:
+    """Is the likeness anchor a DIFFERENT image from the one being judged?
+
+    2026-08-17, scram-rod-drop-desk-switch: --auto fakes the human GO, so the
+    GO-swap set concept.png := the draft hero. BUILD then died on the 64k output
+    cap without producing new geometry, so the anchor and the render were the
+    same bytes. The lens answered honestly — "reference/concept.png is
+    byte-identical to the current render, so there is no independent approved
+    concept image to judge likeness against" — and scored it 0/10 because the
+    verdict format has no way to say "unanswerable". The milestone gate read
+    that 0 as "silhouette unsalvageable" and killed a $29.49 run that had never
+    been judged at all: no build2, no gate, no panel.
+
+    An unanswerable question is not a failing answer. Check before asking.
+    """
+    ref = out_dir / "reference" / "concept.png"
+    if not ref.is_file():
+        ref = out_dir / "concept.png"
+    if not ref.is_file():
+        return False
+    cur = out_dir / f"{out_dir.name}_review" / "_assembled.png"
+    if not cur.is_file():
+        return True  # nothing rendered yet, so nothing to collide with
+    return ref.read_bytes() != cur.read_bytes()
+
+
 def run_build(slug: str, out_dir: Path, run_log: dict) -> None:
     """BUILD with a mid-point likeness milestone.
 
@@ -1287,7 +1321,18 @@ def run_build(slug: str, out_dir: Path, run_log: dict) -> None:
         # anyway. Below the threshold, kill the whole run now.
         m_score = re.search(r"FAIL\s+(\d+(?:\.\d+)?)\s*/\s*10", verdict)
         abort_below = float(os.environ.get("MILESTONE_ABORT_BELOW", "4"))
-        if m_score and float(m_score.group(1)) < abort_below:
+        # Only a JUDGED silhouette may kill the run. When the anchor and the
+        # render are the same bytes the lens cannot answer, and its 0/10 means
+        # "unanswerable", not "hopeless" — aborting on it throws away a whole
+        # cycle over a pipeline defect. Carry on to build2 instead: producing
+        # new geometry is exactly what makes the question answerable again.
+        judged = concept_ref_independent(out_dir)
+        if not judged:
+            run_log["build_milestone"] = (
+                "SKIP likeness unjudgeable — the anchor is byte-identical to the "
+                "render (no independent concept); continuing to build2")
+            print(f"[build-milestone] {run_log['build_milestone']}", flush=True)
+        if judged and m_score and float(m_score.group(1)) < abort_below:
             run_log["build_aborted"] = (
                 f"milestone likeness {m_score.group(1)}/10 < {abort_below:g} — "
                 "silhouette unsalvageable, build2/gate/panel skipped to save budget")
@@ -1299,6 +1344,14 @@ def run_build(slug: str, out_dir: Path, run_log: dict) -> None:
             note = ("\n\nMILESTONE — a likeness lens PASSED the current silhouette "
                     f"({verdict}). Do NOT regress it: finish detail, per-part "
                     "exports, part_colors.json and fit_checks.py.")
+        elif not judged:
+            # Same category as a crashed lens: INCONCLUSIVE. Handing build2 the
+            # 0/10 text would order it to fix a silhouette nobody ever judged.
+            note = ("\n\nMILESTONE — the likeness check could not be answered: "
+                    "the anchor image is byte-identical to the current render, "
+                    "so there was nothing independent to compare against. Treat "
+                    "the silhouette as UNVERIFIED — keep matching the approved "
+                    "renders in reference/ and finish the build.")
         elif verdict == "FAIL no output":
             # Crashed twice: the milestone is INCONCLUSIVE. Never inject the
             # stale findings file — 2026-08-16 a crashed lens fell through to
