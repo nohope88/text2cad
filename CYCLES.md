@@ -10,7 +10,7 @@ cycle — this table is the part that travels.
 
 | product | result | cost | parts | repairs | cause | |
 |---|---|---:|---:|---:|---|---|
-| arc-coil-blaster-prop | FAILED | $76.37 | 17 | 3 | assembly, discover, fidelity | [postmortem](out/arc-coil-blaster-prop/postmortem.md) |
+| arc-coil-blaster-prop | FAILED | $76.26 | 17 | 3 | assembly, discover, fidelity | [postmortem](out/arc-coil-blaster-prop/postmortem.md) |
 | draft-stack-dock | FAILED | $45.04 | — | 5 | harness | [postmortem](out/draft-stack-dock/postmortem.md) |
 | eao-scrap-rifle-color | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/eao-scrap-rifle-color/postmortem.md) |
 | eao-scrap-rifle-pp | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/eao-scrap-rifle-pp/postmortem.md) |
