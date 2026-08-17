@@ -162,6 +162,9 @@ def render(slug: str) -> str:
     L = []
     L.append(f"# Postmortem — {slug}")
     L.append("")
+    if a["run"].get("seed"):
+        L.append(f"**Seed:** {a['run']['seed']}")
+        L.append("")
     L.append(f"**Result:** {a['result']}"
              f" · **cost ${total:.2f}** · **{wall / 3600:.1f}h** · "
              f"{len(phases)} phases")
