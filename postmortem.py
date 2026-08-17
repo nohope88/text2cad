@@ -28,6 +28,10 @@ LEDGER = HERE / "CYCLES.md"
 
 # Signals in gate fails / lens verdicts -> (cause, what to do about it). Order
 # matters: the first match wins, so put the specific patterns first.
+# Mirrors LENSES in text2cad. A panel is only meaningful if every lens actually
+# returned a verdict — see `missing_lenses` below for why this list must exist.
+LENSES = ["printability", "fidelity", "likeness", "sellability"]
+
 CAUSE_RULES = [
     ("stale_stl", "discipline", "the STL was older than main.py — a repair ended without re-exporting"),
     ("not_watertight", "kernel", "OCCT emitted broken/sliver facets — look for two cut boundaries meeting"),
@@ -95,12 +99,32 @@ def analyze(slug: str) -> dict:
         signals.append(f"build-milestone likeness {milestone}")
     signals += [f"{k} out of turns" for k in capped]
 
+    # An ABSENT lens verdict is not a passing one. `panel` lists only lenses
+    # that RETURNED, so a jury that died leaves it empty — which naively reads
+    # as "no failures" and calls an untested product clean (one-way-newsreel
+    # shipped exactly that way: gate PASS, zero verdicts, no panel key).
+    # The lens set grew over time (3 lenses, later 4), so compare against what
+    # this run actually attempted rather than today's list, and separate the
+    # two ways a verdict goes missing — they mean different things.
+    attempted = {k[len("lens-"):].removesuffix("-retry")
+                 for k in run if k.startswith("lens-")}
+    returned = set(panel)
+    no_verdict = sorted(attempted - returned)          # ran, died, said nothing
+    # Only blame a lens for not starting when the panel demonstrably broke down
+    # mid-way. A run whose every attempted lens returned judged the product as
+    # completely as its pipeline version could — older versions had three
+    # lenses, and marking those short is just noise.
+    never_started = sorted(set(LENSES) - attempted - returned) if no_verdict else []
+    missing = no_verdict + never_started
+
     aborted = run.get("build_aborted")
     # A cycle that never reached the gate is INCOMPLETE, not FAILED — scratch
     # dirs and killed runs would otherwise read as product failures.
     result = ("ABORTED" if aborted else
-              "SHIPPED" if gate.get("pass") and not lens_fails else
-              "FAILED" if gate else "INCOMPLETE")
+              "FAILED" if gate and (not gate.get("pass") or lens_fails) else
+              "GATE PASS / NO PANEL" if gate and not attempted and not returned else
+              "GATE PASS / UNJUDGED" if gate and missing else
+              "SHIPPED" if gate else "INCOMPLETE")
     return {
         "run": run, "gate": gate, "panel": panel, "phases": phases,
         "capped": capped, "crashed": crashed, "unknown": unknown,
@@ -112,7 +136,9 @@ def analyze(slug: str) -> dict:
                       if v.get("is_error") or k.endswith("-retry")
                       or k.startswith("repair")),
         "gate_fails": gate_fails, "lens_fails": lens_fails,
-        "milestone": milestone, "aborted": aborted,
+        "milestone": milestone, "aborted": aborted, "missing_lenses": missing,
+        "no_verdict": no_verdict, "never_started": never_started,
+        "judged": sorted(returned),
         "causes": classify(signals), "result": result,
     }
 
@@ -179,9 +205,28 @@ def render(slug: str) -> str:
         L.append(f"- gate: `{f}`")
     for f in lens_fails:
         L.append(f"- {f}")
-    if not (milestone or gate_fails or lens_fails):
+    if not (milestone or gate_fails or lens_fails or a["missing_lenses"]):
         L.append("- nothing — gate and every lens passed on the first pass.")
     L.append("")
+
+    if a["missing_lenses"]:
+        L.append("## Never judged")
+        L.append("")
+        if a["no_verdict"]:
+            L.append(f"- **ran but returned nothing:** {', '.join(a['no_verdict'])} "
+                     "— the lens started and died, so it was paid for and produced "
+                     "no opinion.")
+        if a["never_started"]:
+            L.append(f"- **never started:** {', '.join(a['never_started'])} — the run "
+                     "ended before these were reached.")
+        if a["judged"]:
+            L.append(f"- judged normally: {', '.join(a['judged'])}")
+        L.append("")
+        L.append("**The deterministic gate (mesh, slicer, fit-checks) is the only thing "
+                 "that cleared this build.** Nothing checked whether it reads as the "
+                 "approved concept or whether anyone would want it — an empty panel is "
+                 "an UNTESTED product, not a clean one.")
+        L.append("")
 
     if causes:
         L.append("## Root cause and direction")
@@ -331,6 +376,8 @@ def summary_line(slug: str) -> str:
     causes = list(dict.fromkeys(c for c, _, _ in a["causes"]))
     broke = ([f"milestone {a['milestone']}"] if a["milestone"]
              and str(a["milestone"]).startswith("FAIL") else []) \
+        + ([f"NO VERDICT from {len(a['missing_lenses'])} lenses: "
+            + ", ".join(a["missing_lenses"])] if a["missing_lenses"] else []) \
         + a["gate_fails"] + a["lens_fails"]
     rework = (f"\nrework ${a['burned']:.2f} of ${a['total']:.2f}"
               f" ({len(a['repairs'])} repair, {len(a['capped'])} out of turns,"
