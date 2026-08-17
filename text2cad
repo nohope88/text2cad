@@ -1222,6 +1222,31 @@ def fail_tier(fails: list) -> str:
     return "cosmetic"
 
 
+STUCK_EVIDENCE = re.compile(
+    r"\b0 legal\b|\bno legal\b|\bunresolved conflict|\bfor arbitration\b|"
+    r"\bno \(?\w+, ?\w+\)? pairs\b|\bgeometrically impossible\b|\bover-?constrained\b",
+    re.I)
+
+
+def is_stuck(last_line: str, verdict: str) -> bool:
+    """Has this repair told us it cannot finish — in any words?
+
+    The test used to be `last_line.startswith("STUCK")` and nothing else. On
+    2026-08-17 repair2 swept ~21,000 candidates, proved the brief had ZERO legal
+    (pivot_y, blade_r) pairs, and ended with "params.py now carries both
+    unresolved conflicts for arbitration: C1 and C2". The pipeline did not hear
+    it, spent repair3 (~50 min, $12.94) on the proven-impossible constraint, and
+    repair3 was itself cut off before it could say anything at all.
+
+    An agent that writes "0 legal pairs" has answered the question. Listen for
+    the evidence, not only for the magic word — and read the whole verdict,
+    because a truncated phase never reaches its final line.
+    """
+    if last_line.startswith("STUCK"):
+        return True
+    return bool(STUCK_EVIDENCE.search(verdict or ""))
+
+
 def run_arbitration(slug: str, out_dir: Path, fails: list, tier: str,
                     spent_n: int, run_log: dict) -> None:
     """Run the arbitration phase; falls back to arbitration.md's first
@@ -1264,7 +1289,12 @@ BUILD_TURNS = int(os.environ.get("BUILD_TURNS", "160"))
 DRAFT_TURNS = int(os.environ.get("DRAFT_TURNS", "70"))
 LENS_TURNS = int(os.environ.get("LENS_TURNS", "70"))
 LENS_TURNS_LIKENESS = int(os.environ.get("LENS_TURNS_LIKENESS", "35"))
-REPAIR_TURNS = int(os.environ.get("REPAIR_TURNS", "70"))
+# 2026-08-17: every repair in the scram cycle ended at 71/70 turns —
+# repair1 and repair3 with subtype=error_max_turns and NO output at all,
+# repair2 landing exactly on the boundary. A cap that binds 3 times out of
+# 3 is not a safety limit, it is the real constraint on the work, and a
+# repair cut off before its final line cannot tell the loop what it found.
+REPAIR_TURNS = int(os.environ.get("REPAIR_TURNS", "120"))
 ARB_TURNS = int(os.environ.get("ARB_TURNS", "60"))
 DISCOVER_TURNS = int(os.environ.get("DISCOVER_TURNS", "40"))
 
@@ -1640,7 +1670,7 @@ def main() -> int:
                             f"\nSeverity tier: {tier.upper()} (attempt {spent[tier]}/{TIER_BUDGET[tier]} for this tier).",
                             out_dir, REPAIR_TURNS, run_log, timeout_s=5400)
         stuck = (verdict or "").strip().splitlines()[-1] if (verdict or "").strip() else ""
-        if stuck.startswith("STUCK"):
+        if is_stuck(stuck, verdict):
             # repair declared itself stuck — skip the remaining repair budget
             # and let arbitration decide (it telegrams GO/NO if spec conflict)
             run_arbitration(slug, out_dir, fails + [f"repair{attempt}: {stuck}"],
