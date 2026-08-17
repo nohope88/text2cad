@@ -20,9 +20,11 @@ cycle — this table is the part that travels.
 | finger-mirror-manipulator | INCOMPLETE | $19.09 | — | 0 | — | [postmortem](out/finger-mirror-manipulator/postmortem.md) |
 | finger-mirror-manipulator-pp | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/finger-mirror-manipulator-pp/postmortem.md) |
 | finger-mirror-manipulator-trellis | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/finger-mirror-manipulator-trellis/postmortem.md) |
+| funhaus-canopy-bookend | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/funhaus-canopy-bookend/postmortem.md) |
 | one-twist-coffee-doser | INCOMPLETE | $9.91 | — | 0 | — | [postmortem](out/one-twist-coffee-doser/postmortem.md) |
 | one-way-newsreel | GATE PASS / UNJUDGED | $49.86 | 14 | 0 | harness | [postmortem](out/one-way-newsreel/postmortem.md) |
+| reef-chameleon | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/reef-chameleon/postmortem.md) |
 | robot-phone-holder | GATE PASS / NO PANEL | $14.07 | — | 1 | — | [postmortem](out/robot-phone-holder/postmortem.md) |
-| scram-rod-drop-desk-switch | ABORTED | $29.49 | — | 0 | fidelity | [postmortem](out/scram-rod-drop-desk-switch/postmortem.md) |
+| scram-rod-drop-desk-switch | FAILED | $102.25 | 16 | 3 | budget, fidelity | [postmortem](out/scram-rod-drop-desk-switch/postmortem.md) |
 | shadow-moire-contour-bench | INCOMPLETE | $56.00 | — | 0 | fidelity | [postmortem](out/shadow-moire-contour-bench/postmortem.md) |
 | terminal-cursor-pen-holder | FAILED | $24.95 | — | 3 | discover, harness | [postmortem](out/terminal-cursor-pen-holder/postmortem.md) |
