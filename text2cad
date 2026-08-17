@@ -425,18 +425,59 @@ def render_fresh(slug: str, out_dir: Path) -> bool:
     return ok
 
 
+def ship_decision(gate_pass: bool, panel: dict, expected: list) -> tuple:
+    """(ship, unjudged, failing) — the one place shipping is decided.
+
+    A product ships only when the deterministic gate passes AND every lens that
+    was supposed to run returned a verdict AND none of those verdicts is a
+    failure. The middle clause is the one that was missing: `panel` holds only
+    lenses that RETURNED, so a crashed jury leaves an empty dict that reads as
+    "no failures" — which is how one-way-newsreel was published in 2026-08-16
+    with nothing having judged it at all.
+    """
+    unjudged = [x for x in expected if x not in panel]
+    failing = [f"lens:{k} {v}" for k, v in panel.items()
+               if not str(v).startswith("PASS")]
+    return (bool(gate_pass) and not unjudged and not failing), unjudged, failing
+
+
+def has_concept_ref(out_dir: Path) -> bool:
+    """Is there an approved concept image to judge likeness against?
+
+    Shared by the panel (which skips the likeness lens without one) and the
+    ship decision (which must expect exactly the lenses the panel would run) —
+    two copies of this rule would eventually disagree and let an unjudged
+    product through on a technicality.
+    """
+    return (out_dir / "reference" / "concept.png").is_file() or \
+           (out_dir / "concept.png").is_file()
+
+
 def run_panel(slug: str, out_dir: Path, run_log: dict, lenses=None) -> dict:
     """Independent lens sessions, separate contexts (circuit-style panel)."""
     results = dict(run_log.get("panel") or {})
-    has_concept = (out_dir / "reference" / "concept.png").is_file() or \
-                  (out_dir / "concept.png").is_file()
-    for lens in (lenses or LENSES):
+    has_concept = has_concept_ref(out_dir)
+    todo = list(lenses or LENSES)
+    # Seed every lens as failing BEFORE any of them runs, and persist after each
+    # one. `panel` used to be written only when the whole loop returned, so a
+    # run killed mid-panel left the key absent — and an absent verdict reads as
+    # no failure, which is how one-way-newsreel shipped with zero lens opinions
+    # (2026-08-16). A lens that never reports must look exactly as bad as one
+    # that reports a failure, because for shipping purposes it is.
+    for lens in todo:
+        if lens == "likeness" and not has_concept:
+            continue
+        results.setdefault(lens, "FAIL did not run")
+    run_log["panel"] = results
+    (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
+
+    for lens in todo:
         if lens == "likeness" and not has_concept:
             continue  # nothing approved to be like — plain prompt-only run
         if lens == "likeness":
             render_fresh(slug, out_dir)
         f = out_dir / f"review_{lens}.md"
-        turns = 20 if lens == "likeness" else 45  # likeness reads 3 images, no trimesh
+        turns = LENS_TURNS_LIKENESS if lens == "likeness" else LENS_TURNS
         mtime_before = f.stat().st_mtime if f.is_file() else None
         r = run_phase(f"lens-{lens}", lens_prompt(slug, out_dir, lens), out_dir, turns, run_log, timeout_s=2400)
         results[lens] = lens_verdict(out_dir, lens, r, mtime_before)
@@ -448,6 +489,10 @@ def run_panel(slug: str, out_dir: Path, run_log: dict, lenses=None) -> dict:
             r = run_phase(f"lens-{lens}-retry", lens_prompt(slug, out_dir, lens),
                           out_dir, turns, run_log, timeout_s=2400)
             results[lens] = lens_verdict(out_dir, lens, r, mtime_before)
+        # persist per lens, not per panel: a crash after lens 2 of 4 must still
+        # leave lens 1-2's verdicts on disk for the postmortem to report
+        run_log["panel"] = results
+        (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
     hist_f = out_dir / "panel_history.json"
     try:
         hist = json.loads(hist_f.read_text(encoding="utf-8"))
@@ -806,7 +851,7 @@ def run_discover_panel(out_dir: Path, trend_files: list, run_log: dict) -> str:
         with ThreadPoolExecutor(max_workers=len(PROPOSE_LANES)) as ex:
             list(ex.map(lambda lane: run_phase(
                 f"propose-{lane}{tag}", propose_prompt(lane, out_dir, trend_files, found),
-                out_dir, 24, run_log, timeout_s=1800, model=model_for("discover")),
+                out_dir, DISCOVER_TURNS, run_log, timeout_s=1800, model=model_for("discover")),
                 PROPOSE_LANES))
         empty = [l for l in PROPOSE_LANES if not (out_dir / f"cand_{l}.md").is_file()]
         if len(empty) == len(PROPOSE_LANES):
@@ -1134,7 +1179,7 @@ def run_arbitration(slug: str, out_dir: Path, fails: list, tier: str,
     arb_file = out_dir / "arbitration.md"
     arb_mtime = arb_file.stat().st_mtime if arb_file.is_file() else None
     arb = run_phase("arbitration", arbitration_prompt(slug, out_dir, fails),
-                    out_dir, 50, run_log, timeout_s=3600)
+                    out_dir, ARB_TURNS, run_log, timeout_s=3600)
     last = (arb or "").strip().splitlines()[-1] if (arb or "").strip() else ""
     if not last.startswith(("PROPOSE", "NO-CONFLICT")) and arb_file.is_file() \
             and (arb_mtime is None or arb_file.stat().st_mtime > arb_mtime):
@@ -1158,7 +1203,19 @@ def run_arbitration(slug: str, out_dir: Path, fails: list, tier: str,
     telegram_send_text(msg)
 
 
-BUILD_TURNS = 120
+# Turn caps. Measured across 15 runs (postmortem.py): DRAFT ran out of turns in
+# 7 of them, the lenses in 3, BUILD in 2 — every one of those errored, and the
+# pipeline's answer had been to pay for a retry at the SAME cap. $49 went to
+# phases that were starved rather than wrong. Raised with headroom and made
+# env-tunable so the next tightening does not need a code change; run.json now
+# records max_turns, so the postmortem says plainly whether a cap still binds.
+BUILD_TURNS = int(os.environ.get("BUILD_TURNS", "160"))
+DRAFT_TURNS = int(os.environ.get("DRAFT_TURNS", "70"))
+LENS_TURNS = int(os.environ.get("LENS_TURNS", "70"))
+LENS_TURNS_LIKENESS = int(os.environ.get("LENS_TURNS_LIKENESS", "35"))
+REPAIR_TURNS = int(os.environ.get("REPAIR_TURNS", "70"))
+ARB_TURNS = int(os.environ.get("ARB_TURNS", "60"))
+DISCOVER_TURNS = int(os.environ.get("DISCOVER_TURNS", "40"))
 
 
 def run_build(slug: str, out_dir: Path, run_log: dict) -> None:
@@ -1170,9 +1227,7 @@ def run_build(slug: str, out_dir: Path, run_log: dict) -> None:
     verdict. So: half the budget, then a cheap likeness lens on the current
     geometry, then the second half with that verdict injected — silhouette
     failures now cost half a build, not a whole cycle."""
-    has_concept = (out_dir / "concept.png").is_file() or \
-                  (out_dir / "reference" / "concept.png").is_file()
-    if not has_concept:
+    if not has_concept_ref(out_dir):
         run_phase("build", build_prompt(slug, out_dir), out_dir, BUILD_TURNS,
                   run_log, timeout_s=10800)
         return
@@ -1184,14 +1239,14 @@ def run_build(slug: str, out_dir: Path, run_log: dict) -> None:
         f = out_dir / "review_likeness.md"
         mtime = f.stat().st_mtime if f.is_file() else None
         r = run_phase("build-likeness-check", lens_prompt(slug, out_dir, "likeness"),
-                      out_dir, 20, run_log, timeout_s=2400)
+                      out_dir, LENS_TURNS_LIKENESS, run_log, timeout_s=2400)
         verdict = lens_verdict(out_dir, "likeness", r, mtime)
         if verdict == "FAIL no output":
             # "no output" is an agent CRASH, not a content verdict (lessons.md,
             # three recurrences) — retry once, like the panel already does.
             r = run_phase("build-likeness-check-retry",
                           lens_prompt(slug, out_dir, "likeness"),
-                          out_dir, 20, run_log, timeout_s=2400)
+                          out_dir, LENS_TURNS_LIKENESS, run_log, timeout_s=2400)
             verdict = lens_verdict(out_dir, "likeness", r, mtime)
         run_log["build_milestone"] = verdict
         print(f"[build-milestone] likeness: {verdict}", flush=True)
@@ -1323,7 +1378,7 @@ def main() -> int:
         run_phase("brief", brief_prompt(product_prompt, out_dir), out_dir, 16, run_log, timeout_s=1800)
         if not (out_dir / "brief.md").is_file():
             print("ABORT: brief.md was not produced"); return 1
-        run_phase("draft", draft_prompt(slug, out_dir), out_dir, 45, run_log, timeout_s=3600)
+        run_phase("draft", draft_prompt(slug, out_dir), out_dir, DRAFT_TURNS, run_log, timeout_s=3600)
         rd = out_dir / f"{slug}_review"
         if not (rd / "_assembled.png").is_file():
             # 2026-08-15: two drafts in a row hit the turn cap with zero
@@ -1336,7 +1391,7 @@ def main() -> int:
                       f"with NO export on disk. Do not repeat that: produce "
                       f"`{slug}.stl` and `_assembled.png` at placeholder quality "
                       f"within your first 10 turns, then refine only with what "
-                      f"remains.", out_dir, 45, run_log, timeout_s=3600)
+                      f"remains.", out_dir, DRAFT_TURNS, run_log, timeout_s=3600)
             if not (rd / "_assembled.png").is_file():
                 telegram_send_text(f"text2cad {slug}: draft failed TWICE — "
                                    f"proposal goes out without renders; check {out_dir}")
@@ -1480,7 +1535,7 @@ def main() -> int:
         verdict = run_phase(f"repair{attempt}",
                             repair_prompt(slug, out_dir, fails) +
                             f"\nSeverity tier: {tier.upper()} (attempt {spent[tier]}/{TIER_BUDGET[tier]} for this tier).",
-                            out_dir, 50, run_log, timeout_s=5400)
+                            out_dir, REPAIR_TURNS, run_log, timeout_s=5400)
         stuck = (verdict or "").strip().splitlines()[-1] if (verdict or "").strip() else ""
         if stuck.startswith("STUCK"):
             # repair declared itself stuck — skip the remaining repair budget
@@ -1520,7 +1575,27 @@ def main() -> int:
 
     files = [p.name for p in sorted(out_dir.iterdir()) if p.suffix in (".step", ".stl", ".md", ".json")]
     total = sum(e.get("cost_usd") or 0 for e in run_log.values() if isinstance(e, dict) and "cost_usd" in e)
+
+    # The publish decision, stated once and machine-readably. autoloop used to
+    # grep `gate=PASS` alone, so a product whose entire lens panel crashed still
+    # got published — the deterministic gate only proves a mesh prints, never
+    # that the thing resembles what was approved or that anyone wants it.
+    # Shipping requires BOTH: the gate passes AND every lens returned a verdict
+    # AND none of them failed.
+    expected = [x for x in LENSES if x != "likeness" or has_concept_ref(out_dir)]
+    ship, unjudged, _ = ship_decision(run_log["gate"].get("pass"), panel, expected)
+    run_log["ship"] = ship
+    run_log["unjudged_lenses"] = unjudged
+    (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
+    if not ship and run_log["gate"].get("pass"):
+        why = (f"{len(unjudged)} lens(es) never returned a verdict: {', '.join(unjudged)}"
+               if unjudged else f"failing lenses: {', '.join(lens_fails)}")
+        telegram_send_text(f"{slug}: gate PASSED but NOT shipping — {why}. "
+                           f"An unjudged product is untested, not clean.")
+        print(f"   NOT SHIPPING: {why}")
+
     print(f"\n== DONE {slug}: gate={'PASS' if run_log['gate'].get('pass') else 'FAIL'} "
+          f"ship={'YES' if ship else 'NO'} "
           f"| {verdict.splitlines()[-1] if verdict else '?'}")
     print(f"   files: {files}")
     print(f"   total LLM cost: ${total:.4f}  (details: {out_dir}/run.json)")
