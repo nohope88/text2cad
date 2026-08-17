@@ -151,6 +151,17 @@ def run_phase(name: str, prompt: str, out_dir: Path, max_turns: int, run_log: di
              "out_tokens": (data.get("usage") or {}).get("output_tokens"),
              "is_error": data.get("is_error", default_err)}
     with _LOG_LOCK:  # panel phases run concurrently
+        # A re-judged lens or a repeated repair writes the SAME key, and the
+        # old entry — with its cost — used to vanish. On 2026-08-17 three lens
+        # re-runs and one build crash made run.json report $102.25 for a cycle
+        # that actually spent $116.67, so every figure the pipeline published
+        # about itself was 12% low. Keep the history beside the latest.
+        prev = run_log.get(name)
+        if isinstance(prev, dict) and "wall_s" in prev:
+            n = 2
+            while f"{name}#{n}" in run_log:
+                n += 1
+            run_log[f"{name}#{n}"] = prev
         run_log[name] = entry
         (out_dir / "run.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
     result = (data.get("result") or "").strip()

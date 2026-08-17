@@ -17,6 +17,7 @@ call, no API key, so it always runs — including on a cycle that died because
 the key was exhausted.
 """
 import json
+import re
 import os
 import subprocess
 import sys
@@ -106,7 +107,7 @@ def analyze(slug: str) -> dict:
     # The lens set grew over time (3 lenses, later 4), so compare against what
     # this run actually attempted rather than today's list, and separate the
     # two ways a verdict goes missing — they mean different things.
-    attempted = {k[len("lens-"):].removesuffix("-retry")
+    attempted = {re.sub(r"#\\d+$", "", k)[len("lens-"):].removesuffix("-retry")
                  for k in run if k.startswith("lens-")}
     returned = set(panel)
     no_verdict = sorted(attempted - returned)          # ran, died, said nothing
