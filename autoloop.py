@@ -41,6 +41,62 @@ def load_env():
             os.environ.setdefault(k.strip(), v.strip().strip('"'))
 
 
+MCP_URL = "http://100.82.132.78:8848/mcp"
+
+
+def mcp_call(method: str, params: dict, token: str, timeout: int = 20):
+    """One JSON-RPC call to the second-brain MCP. Returns the result dict or None."""
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+    r = sh(["curl", "-s", "--max-time", str(timeout), "-X", "POST", MCP_URL,
+            "-H", f"Authorization: {token}", "-H", "Content-Type: application/json",
+            "-H", "Accept: application/json, text/event-stream", "-d", body],
+           timeout=timeout + 10)
+    # the endpoint answers SSE: the payload is the last `data:` line
+    for line in reversed((r.stdout or "").splitlines()):
+        if line.startswith("data:"):
+            try:
+                return json.loads(line[5:].strip()).get("result")
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def trend_source_health() -> tuple:
+    """(usable, explanation) — does DISCOVER actually have fresh trends to read?
+
+    The old check was an UNAUTHENTICATED GET that only treated a dead socket as
+    failure. The endpoint answers `403 {"error":"forbidden"}` without a token,
+    which sailed through as "reachable" — so an expired token, or a scraper that
+    quietly stopped, would both have been discovered only after the propose
+    lanes had already been paid for. Verify what DISCOVER actually needs: a
+    digest from today or yesterday, fetched with the real credentials.
+    """
+    try:
+        cfg = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
+        token = cfg["mcpServers"]["second-brain"]["headers"]["Authorization"]
+    except Exception as e:  # noqa: BLE001
+        return False, f"no second-brain credentials in ~/.claude.json ({e})"
+
+    if not mcp_call("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
+                                   "clientInfo": {"name": "autoloop", "version": "1"}}, token):
+        return False, "MCP did not complete a handshake (personal VM down, or token rejected)"
+
+    # autoloop runs at 00:15 UTC and the x-scrape lands ~00:06, but hn-morning
+    # not until ~06:03 — so yesterday's digest is a legitimate pass, and only a
+    # gap on BOTH days means the scraper is dead.
+    today = datetime.date.today()
+    for day in (today, today - datetime.timedelta(days=1)):
+        for kind in ("x-scrape", "hn-morning"):
+            path = f"raw/{day.isoformat()}-{kind}.md"
+            res = mcp_call("tools/call",
+                           {"name": "memory_get", "arguments": {"path": path}}, token)
+            text = json.dumps(res) if res else ""
+            if res and "not found" not in text.lower() and len(text) > 400:
+                return True, f"{path} readable"
+    return False, ("MCP is up but no trend digest exists for today or yesterday — "
+                   "the scraper on the personal VM has stopped")
+
+
 def main() -> int:
     load_env()
     LOGS.mkdir(exist_ok=True)
@@ -52,15 +108,15 @@ def main() -> int:
         print(f"[{today}] cycle already ran — skip")
         return 0
 
-    # trend source lives on the personal VM (tailnet) — alarm early if dark,
-    # a dead MCP would otherwise surface as a confusing discover failure
-    mcp = sh(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-              "--max-time", "5", "http://100.82.132.78:8848/mcp"])
-    if mcp.stdout.strip() in ("", "000"):
-        msg = "text2cad autoloop: second-brain MCP unreachable (personal VM down?) — cycle skipped, will retry tomorrow"
+    # trend source lives on the personal VM (tailnet) — alarm early if dark, a
+    # dead MCP would otherwise surface as a confusing discover failure.
+    ok, why = trend_source_health()
+    if not ok:
+        msg = f"text2cad autoloop: trend source not usable — {why}. Cycle skipped, will retry tomorrow."
         print(msg)
         telegram(msg)
         return 1
+    print(f"[{today}] trend source OK: {why}")
 
     print(f"[{today}] cycle start")
     env = dict(os.environ)
