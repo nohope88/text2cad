@@ -117,10 +117,18 @@ def analyze(slug: str) -> dict:
     never_started = sorted(set(LENSES) - attempted - returned) if no_verdict else []
     missing = no_verdict + never_started
 
+    # Runs from the current pipeline record their own publish decision; trust
+    # it rather than recomputing, so the report can never disagree with what
+    # actually happened. `unjudged_lenses` is the pipeline's own accounting.
+    if run.get("unjudged_lenses") is not None:
+        never_started = [x for x in run["unjudged_lenses"] if x not in no_verdict]
+        missing = no_verdict + never_started
+
     aborted = run.get("build_aborted")
     # A cycle that never reached the gate is INCOMPLETE, not FAILED — scratch
     # dirs and killed runs would otherwise read as product failures.
     result = ("ABORTED" if aborted else
+              "SHIPPED" if run.get("ship") else
               "FAILED" if gate and (not gate.get("pass") or lens_fails) else
               "GATE PASS / NO PANEL" if gate and not attempted and not returned else
               "GATE PASS / UNJUDGED" if gate and missing else
