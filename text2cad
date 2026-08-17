@@ -121,9 +121,26 @@ def run_phase(name: str, prompt: str, out_dir: Path, max_turns: int, run_log: di
     # apart: num_turns at the cap is a BUDGET failure (the phase ran out of room
     # and needs a bigger cap or a narrower task), num_turns below it is a real
     # agent crash (retry). Without the cap on record they look identical.
+    # `subtype` is the CLI's own verdict on HOW the phase ended — "success",
+    # "error_max_turns", "error_during_execution". Everything downstream used to
+    # infer starvation from num_turns >= max_turns, which is simply false: a
+    # healthy judge came back 19/10 because num_turns counts messages, not agent
+    # turns. Record the authoritative field instead of guessing from a proxy.
     entry = {"model": model, "wall_s": round(time.time() - t0, 1),
              "num_turns": data.get("num_turns"), "max_turns": max_turns,
+             "subtype": data.get("subtype"),
              "cost_usd": data.get("total_cost_usd"),
+             # Cache accounting, measured 2026-08-17: the prompt prefix (system
+             # prompt + tools + CLAUDE.md + skills) is shared across SEPARATE
+             # headless invocations, so a phase either pays ~1.25x to WRITE that
+             # prefix or ~0.1x to READ it. In a parallel fan-out exactly one
+             # agent writes and the rest ride free, which is why judge-1 cost
+             # $4.37 while judge-2/3 cost $0.83/$0.94 for identical work. Without
+             # these fields that looks like a broken judge instead of the bill
+             # for its two siblings.
+             "cache_write": (data.get("usage") or {}).get("cache_creation_input_tokens"),
+             "cache_read": (data.get("usage") or {}).get("cache_read_input_tokens"),
+             "out_tokens": (data.get("usage") or {}).get("output_tokens"),
              "is_error": data.get("is_error", default_err)}
     with _LOG_LOCK:  # panel phases run concurrently
         run_log[name] = entry
