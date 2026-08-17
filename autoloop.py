@@ -124,16 +124,24 @@ def main() -> int:
     # 6h (was 3h): 08-14 and 08-15 both finished the build right at the 3h
     # kill, so publish never ran and the whole spend was lost. On timeout,
     # alert instead of dying with a silent traceback.
-    cycle_timeout = int(os.environ.get("CYCLE_TIMEOUT_S", str(6 * 3600)))
+    # 8h, not 6h: raising the turn caps on 2026-08-17 let phases run to
+    # completion instead of dying early, and wall-clock roughly doubled with
+    # them (draft 26m->53m, build 74m->86m, repairs ~50m each). The scram cycle
+    # ran 5h12m and was still going. A ceiling sized for truncated phases now
+    # kills healthy ones, and a kill loses the entire spend.
+    cycle_timeout = int(os.environ.get("CYCLE_TIMEOUT_S", str(8 * 3600)))
     log = LOGS / f"cycle-{today}.log"
+    # Stream to the log instead of capturing: capture_output buffered EVERYTHING
+    # until the process exited, so for up to 8 hours there was no live log at
+    # all and a running cycle could only be inspected through out/*/run.json.
     try:
-        r = subprocess.run([str(HERE / "text2cad"), "--discover", "--auto"],
-                           cwd=HERE, env=env, capture_output=True, text=True,
-                           timeout=cycle_timeout)
-    except subprocess.TimeoutExpired as e:
-        out = e.stdout if isinstance(e.stdout, str) else ""
-        log.write_text((out or "") + f"\n--- KILLED: exceeded {cycle_timeout}s ---\n",
-                       encoding="utf-8")
+        with log.open("w", encoding="utf-8") as fh:
+            r = subprocess.run([str(HERE / "text2cad"), "--discover", "--auto"],
+                               cwd=HERE, env=env, stdout=fh,
+                               stderr=subprocess.STDOUT, timeout=cycle_timeout)
+    except subprocess.TimeoutExpired:
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(f"\n--- KILLED: exceeded {cycle_timeout}s ---\n")
         marker.write_text("", encoding="utf-8")
         msg = (f"text2cad autoloop STUCK [{today}]: cycle exceeded "
                f"{cycle_timeout // 3600}h and was killed — no publish ran. "
@@ -141,14 +149,14 @@ def main() -> int:
         print(msg)
         telegram(msg)
         return 1
-    log.write_text(r.stdout + "\n--- stderr ---\n" + r.stderr, encoding="utf-8")
     marker.write_text("", encoding="utf-8")
 
-    # summarize from the tail of the run
-    tail = "\n".join(r.stdout.strip().splitlines()[-6:])
+    # summarize from the tail of the run (the log already holds every line)
+    stdout = log.read_text(encoding="utf-8", errors="replace")
+    tail = "\n".join(stdout.strip().splitlines()[-6:])
     slug = cost = gate = "?"
     ship = False
-    for ln in r.stdout.splitlines():
+    for ln in stdout.splitlines():
         if ln.startswith("== DONE "):
             slug = ln.split()[2].rstrip(":")
             gate = "PASS" if "gate=PASS" in ln else "FAIL"
