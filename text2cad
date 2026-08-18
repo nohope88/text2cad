@@ -31,6 +31,7 @@ SKILLS = Path.home() / ".claude" / "skills"
 CADCODE = SKILLS / "cadcode"
 CAD_CMD = f"uv run --python 3.12 --with cadquery python3 {CADCODE}/scripts/cad"
 REVIEW_CMD = f"uv run --python 3.12 --with cadquery python3 {CADCODE}/scripts/review"
+MEASURE_CMD = f"uv run --python 3.12 --with cadquery python3 {CADCODE}/scripts/measure"
 GATE_PY = HERE / "gate.py"
 VENV_PY = HERE / ".venv" / "bin" / "python"
 
@@ -257,6 +258,13 @@ copied the file verbatim and it just worked).
 Then read `{CADCODE}/SKILL.md` IN FULL and follow its loop and non-negotiables,
 using its cadlib helpers. This is a "new part" task.
 The cad tool: `{CAD_CMD}`
+The measure tool: `{MEASURE_CMD} <file.step> [--gaps] [--part NAME]` — reads the
+exported STEP's B-rep and prints JSON: per part its STEP label, bbox size,
+center, volume and colour; with `--gaps`, the minimum clearance and overlap
+volume of every nearby pair. Use it for EVERY dimensional question instead of
+loading STLs into trimesh: the number is exact (no mesh tolerance), it costs no
+mesh memory, and it names parts the way the brief does. ~4s for a 16-part model,
+~1min with `--gaps`.
 
 {"A DRAFT params.py/main.py from the preview phase already exists in the output "
  "directory — read it first and IMPROVE it to final quality (keep its approved "
@@ -285,7 +293,12 @@ The cad tool: `{CAD_CMD}`
 OUTPUT — build the project in `{out_dir}`:
 - params.py, main.py (CadQuery) implementing every feature in the brief
 - assembled exports: `{slug}.step` and `{slug}.stl` (+ .step.json sidecar),
-  every part in its assembled pose
+  every part in its assembled pose. Build the assembly as a `cq.Assembly` and
+  give every `.add()` BOTH `name=` (exactly the brief's `## Parts` row name,
+  the same string you use for the fe_parts filename) and `color=cq.Color(...)`
+  (the row's colour). Those two land in the STEP as native labels, which is the
+  only place part identity survives export — the measure tool, the gate's
+  identity check and every later reader take names and colours from there.
 - one STL per part in `{out_dir}/fe_parts/<part_name>.stl`, each IN ITS PRINT
   ORIENTATION (lying on the bed the way it actually prints — the gate scores
   these files, not the assembled pose), named after the brief's `## Parts` rows
@@ -302,6 +315,10 @@ Printability non-negotiables: EVERY part is one connected watertight solid, min
 wall 1.6mm, FDM-safe overhangs, no floating bodies, and no part footprint over
 160x160mm (the A1-mini profile rejects wider, bed nominally 180). Iterate until
 the cad tool JSON shows none of: {BLOCKING}.
+An `interference` warning is not blocking but is never noise: it means two parts
+overlap by more than a shared mating face and less than a gross clash — the size
+a sub-millimetre mating error takes. Either confirm it is a press fit the brief
+asked for, or fix the mate. Do not ship one you have not explained.
 
 NUMERIC CONTRACT — every explicit number the brief states (fillet radii, wall
 thicknesses, angles, clearances, zone sizes) MUST appear as an assert in
@@ -312,9 +329,13 @@ FIT-CHECKS — turn the brief's `## Interfaces` section into machine checks:
 write `{out_dir}/fit_checks.py` that loads the exported STL with trimesh,
 builds a mock box per interface (dims/pose from the brief), and asserts each
 mock intersects the part < 100mm3 (clearance) or as the brief specifies.
-For a multi-part design also assert every mate in `## Parts`: load the two part
-STLs and check their clash volume against the stated clearance — moving parts
-must not be fused solid, mating parts must not float apart.
+For a multi-part design also assert every mate in `## Parts` — but take those
+numbers from `{MEASURE_CMD} {slug}.step --gaps`, not from pairwise trimesh
+loads: each pair reports `gap_mm` (exact minimum clearance) and `overlap_mm3`.
+A mate that must move needs a gap the brief's clearance allows and an overlap of
+zero; a mate that must seat needs a gap of zero. An overlap of a few mm3 is not
+"touching" — it is a sub-millimetre interpenetration and the part will not
+assemble as printed.
 Exit 0 = all fit, nonzero = fail. Run it yourself
 (`{VENV_PY} {out_dir}/fit_checks.py`) and fix geometry until it passes —
 the gate reruns it on every future check.
@@ -375,16 +396,23 @@ with `{REVIEW_CMD}` if none exist). Do NOT edit part files — verdict only.
 
 MEASURE BEFORE YOU CLAIM: renders lie (z-fighting, camera, mplot3d artifacts).
 Any geometric or dimensional finding (missing feature, wrong size/count/
-percentage, breached wall) must be verified against the actual geometry —
-trimesh on the STL, or the numbers in `params.py`/`main.py` — and the finding
-must state the measured number and how you measured it. A claim your own
-measurement contradicts must not be written. Visual-only findings are allowed
-solely for cosmetic issues (render artifacts, colors, surface look).
-MEMORY RULE (hard): measure STLs ONE AT A TIME, each in its OWN short python
-invocation — never load every part (or the assembled mesh plus parts) into a
-single process. A 14-part all-at-once trimesh load hit 14.8GB and the kernel
-OOM-killed the entire pipeline (2026-08-16); the phase now runs under a hard
-rlimit, so an all-at-once load will die with MemoryError anyway.
+percentage, breached wall) must be verified against the actual geometry, and
+the finding must state the measured number and how you measured it. A claim
+your own measurement contradicts must not be written. Visual-only findings are
+allowed solely for cosmetic issues (render artifacts, colors, surface look).
+MEASURE WITH THE MEASURE TOOL FIRST:
+`{MEASURE_CMD} <the .step> [--gaps] [--part NAME]` prints, per part, its STEP
+label, bbox size, center, volume and colour — and with `--gaps` the exact
+minimum clearance and overlap volume of every nearby pair. It reads the B-rep,
+so the numbers carry no mesh tolerance and one 4-second call answers what a
+dozen trimesh loads would. Use trimesh only for genuinely mesh-level questions
+(watertightness, triangle counts, overhang area).
+MEMORY RULE (hard): if you do fall back to trimesh, measure STLs ONE AT A TIME,
+each in its OWN short python invocation — never load every part (or the
+assembled mesh plus parts) into a single process. A 14-part all-at-once trimesh
+load hit 14.8GB and the kernel OOM-killed the entire pipeline (2026-08-16); the
+phase now runs under a hard rlimit, so an all-at-once load will die with
+MemoryError anyway.
 If `arbitration.md` exists, read it FIRST: claims it refuted with measurements
 must not be re-raised unless your own new measurement disagrees — a prior
 panel burned repair rounds chasing two measurably-false findings."""
