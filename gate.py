@@ -8,11 +8,13 @@ Mesh/slice logic mirrors minimax-panda's evaluate.py so scores stay comparable.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+MEASURE = Path.home() / ".claude" / "skills" / "cadcode" / "scripts" / "measure"
 OVERHANG_FAIL_PCT = 50.0
 # 0 = no limit (Tam 2026-08-11: print time is the buyer's concern for
 # digital-download products; set per-run only if selling physical prints)
@@ -36,6 +38,58 @@ def lint_code(out_dir: Path) -> list:
                           f"profile-baked corner rounds (blocks/cadblocks.rounded_box) "
                           f"or directional selectors ('|Z', '>Z')")
     return issues
+
+
+def part_identity(out_dir: Path) -> tuple:
+    """Check the STEP's own part labels against fe_parts/ and part_colors.json.
+
+    The exported STEP already carries every part's name and colour as XCAF
+    labels (cadpy writes them from the cq.Assembly), so it is the one artifact
+    where part identity is not a naming convention. The viewer, though, is fed
+    fe_parts/*.stl + part_colors.json keyed by filename — and a part the STEP
+    knows about but those two do not ships as an unpainted white part. That is
+    a silent defect: every render the panel looks at is generated from the
+    assembly, not from the viewer's inputs.
+
+    Returns (report, fails). A label the colourway never mentions is a fail; a
+    part carrying no name at all (part_00, mesh-derived lanes) is reported and
+    left alone.
+    """
+    steps = sorted(out_dir.glob("*.step"))
+    if not steps or not MEASURE.is_dir():
+        return {}, []
+    uv = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
+    try:
+        r = subprocess.run(
+            [uv, "run", "--python", "3.12", "--with", "cadquery", "python3",
+             str(MEASURE), str(steps[0])],
+            capture_output=True, text=True, timeout=180, cwd=out_dir)
+        payload = json.loads((r.stdout or "").strip().splitlines()[-1])
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}, []
+    if not payload.get("ok"):
+        return {"error": payload.get("error", {}).get("message", "measure failed")}, []
+
+    labels = [p.get("name", "") for p in payload.get("parts", [])]
+    report = {"step": steps[0].name, "n_labels": len(labels)}
+    if len(labels) < 2:
+        return report, []  # single-solid design: nothing to key
+
+    anonymous = [n for n in labels if re.fullmatch(r"part_?\d+", n or "")]
+    if anonymous:
+        report["unnamed"] = len(anonymous)
+    try:
+        colors = json.loads((out_dir / "part_colors.json").read_text(encoding="utf-8"))
+    except Exception:
+        return report, []  # no colourway authored — publish ships white by design
+    have = {str(k).removesuffix(".stl") for k in colors}
+    missing = [n for n in labels if n and n not in have
+               and re.sub(r"_\d+$", "", n) not in have]
+    if missing:
+        report["uncoloured"] = missing
+        return report, [f"part_identity(STEP labels with no part_colors entry: "
+                        f"{', '.join(missing[:6])} — these ship white)"]
+    return report, []
 
 
 def mesh_stats(stl_path: Path) -> dict:
@@ -199,6 +253,10 @@ def main() -> int:
             report["stale_stl_s"] = stale_s
             fails.append(f"stale_stl(main.py {stale_s}s newer than exports; re-export)")
         fails += lint_code(out_dir)
+        identity, identity_fails = part_identity(out_dir)
+        if identity:
+            report["part_identity"] = identity
+        fails += identity_fails
         fc = out_dir / "fit_checks.py"
         if fc.is_file():
             r = subprocess.run([sys.executable, str(fc)], capture_output=True,
