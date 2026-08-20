@@ -53,7 +53,12 @@ def env_of(path):
 def main():
     slug = sys.argv[1]
     dry = "--dry-run" in sys.argv
+    # --dir lets another pipeline reuse this: text2game's out/ lives in its own
+    # repo, and re-implementing the FE group ownership there would duplicate the
+    # one piece of logic that stops a fragmented assembly being miskeyed.
     out_dir = HERE / "out" / slug
+    if "--dir" in sys.argv:
+        out_dir = Path(sys.argv[sys.argv.index("--dir") + 1]).resolve()
     pub = out_dir / "published.json"
     if not pub.is_file():
         print("fe_colors: no published.json — publish first"); return 2
@@ -100,6 +105,8 @@ def main():
             stl = out_dir / f"{slug}.stl"
         if not stl.is_file():
             stl = out_dir / "main.stl"
+        if not stl.is_file():
+            stl = out_dir / "assembled.stl"   # text2game names it this
         if not stl.is_file():
             print("fe_colors: no assembled STL in out dir"); return 2
         os.symlink(stl, stage / "model.stl")
