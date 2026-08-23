@@ -20,7 +20,12 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-GATEWAY = "https://2x4090-9091.eternalai.org"
+# Base URL moved 2026-08-19 (owner's call, verified end-to-end first: t2i 12s,
+# pisa-sr 4.0MP, fl2va mp4 with full atoms). Same MEDIA_GATEWAY_API_KEY.
+# Results now land on storage.googleapis.com/lora-lab/ instead of the
+# gateway's own /statics/ path — read result_files[0].file_url, never build it.
+# Rollback: https://2x4090-9091.eternalai.org (still live as of 2026-08-19)
+GATEWAY = "https://lora-lab-be.eternalai.org/v2/api/media-gen"
 ADMINDASH = "http://localhost:8090"
 
 

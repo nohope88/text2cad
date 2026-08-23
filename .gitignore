@@ -17,3 +17,4 @@ blocks/preview/
 
 # built binaries (rebuild via integrations/importdesign/build.sh)
 bin/
+tg/
