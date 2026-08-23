@@ -66,12 +66,29 @@ RULES:
 Reply with ONE line: a <=60-char summary of what you improved (or NO-CHANGE)."""
 
 
+def dirty_files() -> set:
+    """Paths `git status` calls modified or untracked, right now."""
+    out = sh(["git", "status", "--porcelain", "--untracked-files=all"]).stdout
+    return {l[3:].strip() for l in out.splitlines() if l.strip()}
+
+
 def main() -> int:
     load_env()
     today = datetime.date.today().isoformat()
     branch = f"improve/{today}"
     sh(["git", "checkout", "main"])
     sh(["git", "pull"])
+    # The working tree carries operational files that are deliberately NOT in
+    # main (tg_bridge.py, qwen_proxy.py, gen_howto_video.py, ...) and owner
+    # edits not yet committed. 2026-08-23 this script `git add -A`-ed all of
+    # them into the improve branch and `git checkout main` then REMOVED them
+    # from the working tree - the Telegram bridge, the video chain and the
+    # owner's concept_image.py edits vanished until a session restored them
+    # from the branch. Snapshot the pre-existing dirt; only what the SESSION
+    # changes is ever staged, and the dirt rides across the checkout untouched.
+    pre_dirty = dirty_files()
+    if pre_dirty:
+        print(f"[{today}] pre-existing untracked/modified (left alone): {sorted(pre_dirty)}")
     sh(["git", "checkout", "-B", branch])
 
     env = dict(os.environ)
@@ -92,11 +109,11 @@ def main() -> int:
         sh(["git", "checkout", "main"])
         return 1
 
-    changed = [l[3:] for l in sh(["git", "status", "--porcelain"]).stdout.splitlines() if l.strip()]
+    changed = sorted(dirty_files() - pre_dirty)
     if not changed:
         print("no changes"); sh(["git", "checkout", "main"]); return 0
 
-    sh(["git", "add", "-A"])
+    sh(["git", "add", "--", *changed])
     sh(["git", "commit", "-m", f"improve: weekly session {today}"])
     if set(changed) <= DOC_TIER:
         sh(["git", "checkout", "main"])
