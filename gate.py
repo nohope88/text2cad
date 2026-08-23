@@ -92,6 +92,65 @@ def part_identity(out_dir: Path) -> tuple:
     return report, []
 
 
+def parts_coverage(out_dir: Path) -> tuple:
+    """brief.md's `## Parts` table is the contract for what gets built — a part
+    authored in its own .py module but never added to the cq.Assembly ships
+    with no STL, no render and no STEP label, and nothing else in the gate can
+    see it (part_identity() above only cross-checks artifacts that already
+    agree something exists). Caught exactly this: arc-coil-blaster-prop
+    (2026-08-17) had an arbitration-added row 13 "Grip + guard bow" authored in
+    spines.py and never registered — fidelity and likeness both eventually
+    caught it, but only after 3 repair rounds and $76.26 chasing a part that
+    was never there to fix.
+
+    Heuristic on purpose, not exact-name matching: fe_parts filenames are the
+    build phase's own slugification of the row name (build_prompt asks for
+    "the same string" but an LLM's slug is not a fixed function), so this asks
+    a weaker question — does ANY real word from the row's name show up in ANY
+    exported part filename? An unbuilt part shares zero vocabulary with what
+    did get built; a merely differently-cased/underscored name still passes.
+    Validated against 2026-08 multi-part runs: 0 false positives on
+    scram-rod-drop-desk-switch (14 rows/16 stl) and one-way-newsreel
+    (13 rows/14 stl).
+    """
+    brief = out_dir / "brief.md"
+    if not brief.is_file():
+        return {}, []
+    text = brief.read_text(encoding="utf-8", errors="ignore")
+    m = re.search(r"^##\s*Parts\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    if not m:
+        return {}, []
+    rows = [l for l in m.group(1).splitlines() if l.strip().startswith("|")]
+    rows = [r for r in rows if not re.match(r"^\|[\s:—-]+\|", r.strip())]
+    names = []
+    for r in rows[1:]:  # rows[0] is the header ("| # | Part | Qty | ... |")
+        cells = [c.strip() for c in r.strip().strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        name = re.sub(r"\(.*?\)", "", re.sub(r"\*+", "", cells[1])).strip()
+        if name:
+            names.append(name)
+    if not names:
+        return {}, []
+    stls = sorted((out_dir / "fe_parts").glob("*.stl"))
+    haystack = " ".join(p.stem.lower().replace("_", " ") for p in stls)
+    if not haystack:
+        return {}, []
+    stop = {"the", "and", "with", "for", "its", "that", "over", "off", "not",
+            "are", "was", "per", "two", "one", "all", "any", "into", "each"}
+    missing = [name for name in names
+               if (words := [w.lower() for w in re.findall(r"[A-Za-z]{3,}", name)
+                              if w.lower() not in stop])
+               and not any(w in haystack for w in words)]
+    report = {"brief_parts": len(names), "fe_parts": len(stls)}
+    if missing:
+        report["unbuilt"] = missing
+        return report, [f"parts_coverage(brief.md Parts rows with no matching "
+                        f"fe_parts STL: {', '.join(missing[:6])} — authored "
+                        f"nowhere or never registered in the assembly)"]
+    return report, []
+
+
 def mesh_stats(stl_path: Path) -> dict:
     import trimesh
     import numpy as np
@@ -257,6 +316,10 @@ def main() -> int:
         if identity:
             report["part_identity"] = identity
         fails += identity_fails
+        coverage, coverage_fails = parts_coverage(out_dir)
+        if coverage:
+            report["parts_coverage"] = coverage
+        fails += coverage_fails
         fc = out_dir / "fit_checks.py"
         if fc.is_file():
             r = subprocess.run([sys.executable, str(fc)], capture_output=True,
