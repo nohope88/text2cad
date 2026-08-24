@@ -40,6 +40,22 @@ def upload(path: Path, token: str) -> str:
     return m.group(0)
 
 
+def ensure_conversation(out_dir: Path) -> None:
+    """Best-effort chat history: build conversation.jsonl (the platform's
+    Chat-history file, see conversation_jsonl.py) before the project upload —
+    gcs_upload_project.py ships whatever sits beside the STL. Round summaries
+    live outside out_dir for staged pipelines (text-to-3d keeps them in its
+    own project dir, excluded from the publish snapshot), so callers pass
+    CONV_ROUNDS_DIR (colon-separated) through the environment."""
+    if (out_dir / "conversation.jsonl").is_file():
+        return
+    cmd = [sys.executable, str(HERE / "conversation_jsonl.py"), str(out_dir)]
+    for d in filter(None, os.environ.get("CONV_ROUNDS_DIR", "").split(":")):
+        cmd += ["--rounds-dir", d]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    print((r.stdout or r.stderr).strip()[-300:])
+
+
 def upload_project(out_dir: Path, slug: str, project_url: str) -> bool:
     """Push the FE project files (assembled STL + _tree.json) to the history's
     CDN prefix so the platform viewer isn't empty. Best-effort: a failure keeps
@@ -148,6 +164,7 @@ def main() -> int:
     (out_dir / "published.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     viewer = ""
     if info.get("project_url"):
+        ensure_conversation(out_dir)
         if upload_project(out_dir, slug, info["project_url"]):
             viewer = apply_part_colors(slug)
         else:

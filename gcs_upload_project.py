@@ -47,6 +47,13 @@ params = os.path.join(os.path.dirname(stl), "params.py")
 if os.path.exists(params):
     tree[0]["contents"].append({"type": "file", "name": "params.py"})
     uploads.append(("params.py", params, "text/x-python"))
+# The design's public chat history (built by conversation_jsonl.py): the
+# platform reads a conversation.jsonl at the snapshot root, same contract as
+# imported designs (panda-social-backend services/import.go). Best-effort.
+conv = os.path.join(os.path.dirname(stl), "conversation.jsonl")
+if os.path.exists(conv) and os.path.getsize(conv) <= 90 << 20:
+    tree[0]["contents"].append({"type": "file", "name": "conversation.jsonl"})
+    uploads.append(("conversation.jsonl", conv, "application/x-ndjson"))
 with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
     json.dump(tree, f)
 uploads.append(("_tree.json", f.name, "application/json"))
