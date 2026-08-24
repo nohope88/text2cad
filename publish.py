@@ -56,6 +56,19 @@ def ensure_conversation(out_dir: Path) -> None:
     print((r.stdout or r.stderr).strip()[-300:])
 
 
+def seed_turns(out_dir: Path) -> None:
+    """Best-effort: seed the studio's Chat history (an import_step turn in
+    generation_jobs + the transcript in claude_session_store) from the
+    conversation.jsonl just built — see seed_turns.py. The CDN copy feeds the
+    import/remix lane; the studio chat reads Mongo turns, so both ship."""
+    py = "/root/.venvs/pi-agent-test/bin/python3"
+    if not Path(py).is_file():
+        py = sys.executable
+    r = subprocess.run([py, str(HERE / "seed_turns.py"), str(out_dir)],
+                       capture_output=True, text=True, timeout=120)
+    print((r.stdout or r.stderr).strip()[-300:])
+
+
 def upload_project(out_dir: Path, slug: str, project_url: str) -> bool:
     """Push the FE project files (assembled STL + _tree.json) to the history's
     CDN prefix so the platform viewer isn't empty. Best-effort: a failure keeps
@@ -165,6 +178,7 @@ def main() -> int:
     viewer = ""
     if info.get("project_url"):
         ensure_conversation(out_dir)
+        seed_turns(out_dir)
         if upload_project(out_dir, slug, info["project_url"]):
             viewer = apply_part_colors(slug)
         else:
