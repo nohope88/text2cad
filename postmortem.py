@@ -40,8 +40,10 @@ CAUSE_RULES = [
     ("bridge_span", "printability", "an unsupported internal ceiling — tent the cavity roof or add hidden ribs"),
     ("overhang", "printability", "too much unsupported material for unattended FDM"),
     ("slice", "printability", "the slicer refused it — usually the 160x160 usable-bed limit"),
+    ("parts_coverage", "discipline", "a brief Parts row was authored but never wired into the cq.Assembly"),
     ("fit_check", "assembly", "a mock/interface check failed — verify the mock still matches params.py"),
     ("FAIL no output", "harness", "a reviewer agent CRASHED — no geometry cause, it needs a retry"),
+    ("phase crashed", "harness", "an orchestrator phase died mid-run — a transient agent failure, not a design defect"),
     ("out of turns", "budget", "a phase hit its turn cap — it was starved, not wrong"),
     ("likeness", "fidelity", "the build does not read as the approved concept"),
     ("fidelity", "fidelity", "geometry drifted from brief.md features/dimensions"),
@@ -80,14 +82,27 @@ def analyze(slug: str) -> dict:
 
     # An is_error phase is either OUT OF TURNS (budget too small for the task —
     # raise the cap or narrow the job) or a real agent CRASH (retry). They need
-    # opposite fixes, so never report them as one number. Runs from before
-    # max_turns was logged cannot be told apart at all; say so rather than
-    # guessing — a confident wrong label is worse than an honest unknown.
-    capped = [k for k, v in phases if v.get("is_error") and v.get("max_turns")
-              and (v.get("num_turns") or 0) >= v["max_turns"]]
-    crashed = [k for k, v in phases if v.get("is_error") and v.get("max_turns")
-               and k not in capped]
-    unknown = [k for k, v in phases if v.get("is_error") and not v.get("max_turns")]
+    # opposite fixes, so never report them as one number. Prefer the CLI's own
+    # `subtype` ("error_max_turns" / "error_during_execution" / "success") when
+    # a run has it — text2cad's run_phase() started recording it 2026-08-17
+    # explicitly because the num_turns>=max_turns proxy is "simply false" (its
+    # own comment: a healthy judge can land at 19/10 because num_turns counts
+    # messages, not agent turns). Only fall back to that proxy on runs old
+    # enough to predate the field; say "unknown" rather than guess wrong.
+    def _kind(v: dict) -> str:
+        subtype = v.get("subtype")
+        if subtype == "error_max_turns":
+            return "capped"
+        if subtype:  # error_during_execution, or is_error true despite subtype
+            return "crashed"  # "success" — both mean the CLI did not call it starved
+        if v.get("max_turns"):
+            return "capped" if (v.get("num_turns") or 0) >= v["max_turns"] else "crashed"
+        return "unknown"
+
+    kinds = {k: _kind(v) for k, v in phases if v.get("is_error")}
+    capped = [k for k, kind in kinds.items() if kind == "capped"]
+    crashed = [k for k, kind in kinds.items() if kind == "crashed"]
+    unknown = [k for k, kind in kinds.items() if kind == "unknown"]
 
     gate_fails = list(gate.get("fails") or [])
     lens_fails = [f"lens:{k} {v}" for k, v in panel.items() if not str(v).startswith("PASS")]
@@ -99,6 +114,15 @@ def analyze(slug: str) -> dict:
     if milestone and str(milestone).startswith("FAIL"):
         signals.append(f"build-milestone likeness {milestone}")
     signals += [f"{k} out of turns" for k in capped]
+    # A confirmed crash is itself a "what broke" — not reporting it left
+    # keep-the-light-relay's postmortem (2026-08-19, brief CRASHED at 3/60
+    # turns) reading "nothing — gate and every lens passed on the first pass",
+    # which is false: nothing passed, the run never got that far. `unknown`
+    # stays OUT of the cause tally on purpose — those predate both `subtype`
+    # and `max_turns`, so calling them "crashed" would be exactly the
+    # "confident wrong label" this file's own comment above warns against;
+    # they still show up in "What broke" below, just without a verdict.
+    signals += [f"{k} phase crashed" for k in crashed]
 
     # An ABSENT lens verdict is not a passing one. `panel` lists only lenses
     # that RETURNED, so a jury that died leaves it empty — which naively reads
@@ -217,7 +241,19 @@ def render(slug: str) -> str:
         L.append(f"- gate: `{f}`")
     for f in lens_fails:
         L.append(f"- {f}")
-    if not (milestone or gate_fails or lens_fails or a["missing_lenses"]):
+    if capped:
+        L.append(f"- {', '.join(capped)} hit its turn cap and produced no output "
+                 "to judge — starved, not necessarily wrong.")
+    if crashed:
+        L.append(f"- {', '.join(crashed)} crashed before producing output — "
+                 "this cycle never got far enough to say anything about the "
+                 "product itself.")
+    if unknown:
+        L.append(f"- {', '.join(unknown)} errored on a run too old to log "
+                 "`max_turns` — starved vs. crashed can't be told apart here, "
+                 "compare `num_turns` against the cap in text2cad by hand.")
+    if not (milestone or gate_fails or lens_fails or a["missing_lenses"]
+            or capped or crashed or unknown):
         L.append("- nothing — gate and every lens passed on the first pass.")
     L.append("")
 

@@ -11,6 +11,7 @@ cycle — this table is the part that travels.
 | product | result | cost | parts | repairs | cause | |
 |---|---|---:|---:|---:|---|---|
 | arc-coil-blaster-prop | FAILED | $76.26 | 17 | 3 | assembly, discover, fidelity | [postmortem](out/arc-coil-blaster-prop/postmortem.md) |
+| chameleon | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/chameleon/postmortem.md) |
 | draft-stack-dock | FAILED | $45.04 | — | 5 | harness | [postmortem](out/draft-stack-dock/postmortem.md) |
 | eao-scrap-rifle-color | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/eao-scrap-rifle-color/postmortem.md) |
 | eao-scrap-rifle-pp | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/eao-scrap-rifle-pp/postmortem.md) |
@@ -21,10 +22,14 @@ cycle — this table is the part that travels.
 | finger-mirror-manipulator-pp | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/finger-mirror-manipulator-pp/postmortem.md) |
 | finger-mirror-manipulator-trellis | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/finger-mirror-manipulator-trellis/postmortem.md) |
 | funhaus-canopy-bookend | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/funhaus-canopy-bookend/postmortem.md) |
+| keep-the-light-relay | INCOMPLETE | $0.00 | — | 0 | harness | [postmortem](out/keep-the-light-relay/postmortem.md) |
 | one-twist-coffee-doser | INCOMPLETE | $9.91 | — | 0 | — | [postmortem](out/one-twist-coffee-doser/postmortem.md) |
 | one-way-newsreel | GATE PASS / UNJUDGED | $49.86 | 14 | 0 | harness | [postmortem](out/one-way-newsreel/postmortem.md) |
+| quorum-shard-vault | INCOMPLETE | $0.00 | — | 0 | budget, harness | [postmortem](out/quorum-shard-vault/postmortem.md) |
 | reef-chameleon | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/reef-chameleon/postmortem.md) |
 | robot-phone-holder | GATE PASS / NO PANEL | $14.07 | — | 1 | — | [postmortem](out/robot-phone-holder/postmortem.md) |
 | scram-rod-drop-desk-switch | FAILED | $102.25 | 16 | 3 | budget, fidelity | [postmortem](out/scram-rod-drop-desk-switch/postmortem.md) |
 | shadow-moire-contour-bench | INCOMPLETE | $56.00 | — | 0 | fidelity | [postmortem](out/shadow-moire-contour-bench/postmortem.md) |
+| spot | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/spot/postmortem.md) |
+| spot-poseable | INCOMPLETE | $0.00 | — | 0 | — | [postmortem](out/spot-poseable/postmortem.md) |
 | terminal-cursor-pen-holder | FAILED | $24.95 | — | 3 | discover, harness | [postmortem](out/terminal-cursor-pen-holder/postmortem.md) |
