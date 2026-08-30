@@ -116,6 +116,17 @@ Pre-mix `.env` kept at `.env.bak-pre-modelmix`.
 | `0 1 * * 0` | `improve.py` — weekly self-improvement session |
 | `0 4 * * *` | `watchdog.sh` — dead-man alert if heartbeat >28h stale |
 
+**Status check (2026-08-30):** the `autoloop.py` and `watchdog.sh` crontab
+lines above are currently commented out on the box (`#DISABLED 2026-08-15`),
+the latter disabled the same day specifically because it "alarms daily when
+autoloop is off" — silencing the alarm rather than fixing why autoloop was
+off. `.heartbeat` has not advanced past 2026-08-17, i.e. 0 cycles for 13 days
+with no automated signal, because the signal was the thing that got turned
+off. `logs/autoloop.log`'s last entries show `--discover --auto` twice hit
+its 10800s timeout (2026-08-14/15) before commit `9003289` raised the ceiling
+to 8h; confirm that actually holds before re-enabling both lines — this is an
+ops decision for a human, run `crontab -e` to restore them.
+
 ## Multi-part colors (publish lane)
 
 A multi-part design ships per-part STLs in `out/<slug>/fe_parts/` (named

@@ -282,6 +282,18 @@ USER REQUEST: "{user_prompt}"
    inside a 2mm wall). If a number does not fit, relax ONE of the
    conflicting numbers now, in the brief — do not ship the conflict for
    BUILD or arbitration to discover later at higher cost.
+   If ANY part MOVES (a rocker, slide, pawl, ratchet, hinge, drop weight),
+   doing the check above only at its resting pose is not enough: compute its
+   full swept envelope across EVERY state in its range of motion — not just
+   the position it's shown in — and check that against every fixed feature
+   sharing its column, not only the one feature it was drawn next to
+   (scram-rod-drop-desk-switch, 2026-08-17: a rocker legend's SHOWING position
+   cleared the falling rod fine; its HIDDEN position, one swing-angle later,
+   swept back into the rod's own drop column, and nothing before build ever
+   evaluated that second state — an all-static self-check had already shipped
+   by then and did not catch it). State each moving part's positions as
+   explicit (y, z) pairs at rest and at full travel, in both directions if
+   reversible, and check all of them, before you call the brief done.
 
 WRITE THE FILE EARLY, THEN IMPROVE IT. Before any deep research or arithmetic,
 put a COMPLETE rough brief.md on disk — every required section present, values
@@ -1258,6 +1270,18 @@ you past the printability non-negotiables.
    e.g. multiple bodies usually means unioned pieces only touch tangentially
    or don't overlap; make every piece OVERLAP its neighbor by >= 1mm and fuse
    with a single union chain into ONE solid.
+   If a finding says a feature is "missing" or "absent entirely", do NOT
+   treat that as an ADD-geometry task until you have checked BOTH directions:
+   grep `brief.md` for an explicit ban on that feature, and grep
+   `fit_checks.py` for a check that already reserves that feature's exact
+   volume for something else. Either one means the absence is the resolved
+   side of a conflict a prior arbitration (or the brief itself) already
+   settled, not a build defect — reply `STUCK spec-conflict` instead of
+   adding it back (arc-coil-blaster-prop, 2026-08-14: a repair session added
+   a trigger guard to satisfy a "missing feature" lens finding, even though
+   brief.md banned it twice and fit_checks.py's hand-clearance mock reserved
+   exactly the volume a guard bow would occupy — the finding was correct that
+   the geometry was absent and wrong that absence was the bug).
 2. Fix the code. Do NOT redesign the product; change geometry construction only.
 3. Re-export with the cad tool (`{CAD_CMD}`), re-run the gate (`{gate_cmd}`),
    and iterate SYNCHRONOUSLY until the gate prints GATE PASS.
