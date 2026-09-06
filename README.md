@@ -116,6 +116,29 @@ Pre-mix `.env` kept at `.env.bak-pre-modelmix`.
 | `0 1 * * 0` | `improve.py` — weekly self-improvement session |
 | `0 4 * * *` | `watchdog.sh` — dead-man alert if heartbeat >28h stale |
 
+**Status check (2026-09-06):** `autoloop.py` and `watchdog.sh` are still
+disabled on the box (`#DISABLED 2026-08-15` in `crontab -l`) — first flagged
+in the 2026-08-30 self-improvement session and unchanged three weeks later.
+`.heartbeat` is still stuck at `2026-08-17`: 20 days, 0 cycles. This is why
+three straight weekly sessions (2026-08-23, 2026-08-30, 2026-09-06) found no
+`logs/cycle-*.log` or `out/*/run.json` newer than mid-August to learn from —
+"evidence from this week" has been structurally empty the whole time.
+Re-enabling both lines is a human call (`crontab -e`); this note stays until
+someone acts on it, since one comment in a rotated log clearly didn't.
+
+**PR backlog (checked via `gh pr list` 2026-09-06):** PR #2
+(`improve/2026-08-23`) and PR #3 (`improve/2026-08-30`) are both still OPEN —
+2 and 3 weeks unreviewed. PR #3 already graduates the two remaining OPEN
+`brief`-cause `lessons.md` entries (eclipse-v2's kinematic-reach formula,
+scram-rod-drop's swept-envelope check) into `brief_prompt`/`repair_prompt` —
+a future session should NOT re-derive that fix, only get #3 reviewed and
+merged. `lessons.md` keeps those two tagged OPEN on `main` on purpose until
+the code actually lands there; flipping them to GRADUATED now would claim a
+constraint that isn't live yet. Every unmerged code-tier PR is also why this
+session adds nothing to that queue: a doc-only fix merges straight to `main`
+(`improve.py`'s `DOC_TIER` path), a code-tier one would just be PR #4 behind
+two others nobody has looked at.
+
 ## Multi-part colors (publish lane)
 
 A multi-part design ships per-part STLs in `out/<slug>/fe_parts/` (named
