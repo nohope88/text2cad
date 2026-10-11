@@ -72,6 +72,29 @@ def dirty_files() -> set:
     return {l[3:].strip() for l in out.splitlines() if l.strip()}
 
 
+def snapshot(paths) -> dict:
+    """path -> raw bytes (or None if unreadable), so a path that was ALREADY
+    dirty before the session can still be detected as touched THIS session.
+    `changed = dirty_files() - pre_dirty` is a pure path-set diff: a path
+    already in `pre_dirty` can never appear in `changed` again, no matter how
+    its content changes later. README.md and lessons.md got stuck exactly
+    this way: `logs/improve.log`'s 2026-10-04 entry lists both in
+    "pre-existing untracked/modified (left alone)" for the first time (no
+    earlier week's entry names either), main's last real commit to them is
+    2026-09-13 / 2026-08-17 respectively, and every week since has kept
+    editing them without ever landing — each week's edits just became next
+    week's "pre-existing" dirt. Comparing content (not just path membership)
+    against this snapshot is what tells a real edit apart from untouched
+    carried-over dirt."""
+    snap = {}
+    for p in paths:
+        try:
+            snap[p] = (HERE / p).read_bytes()
+        except OSError:
+            snap[p] = None
+    return snap
+
+
 def main() -> int:
     load_env()
     today = datetime.date.today().isoformat()
@@ -87,6 +110,7 @@ def main() -> int:
     # from the branch. Snapshot the pre-existing dirt; only what the SESSION
     # changes is ever staged, and the dirt rides across the checkout untouched.
     pre_dirty = dirty_files()
+    pre_snapshot = snapshot(pre_dirty)
     if pre_dirty:
         print(f"[{today}] pre-existing untracked/modified (left alone): {sorted(pre_dirty)}")
     sh(["git", "checkout", "-B", branch])
@@ -109,7 +133,12 @@ def main() -> int:
         sh(["git", "checkout", "main"])
         return 1
 
-    changed = sorted(dirty_files() - pre_dirty)
+    post_dirty = dirty_files()
+    touched_pre_existing = {
+        p for p in (post_dirty & pre_dirty)
+        if snapshot([p]).get(p) != pre_snapshot.get(p)
+    }
+    changed = sorted((post_dirty - pre_dirty) | touched_pre_existing)
     if not changed:
         print("no changes"); sh(["git", "checkout", "main"]); return 0
 
