@@ -282,6 +282,14 @@ USER REQUEST: "{user_prompt}"
    inside a 2mm wall). If a number does not fit, relax ONE of the
    conflicting numbers now, in the brief — do not ship the conflict for
    BUILD or arbitration to discover later at higher cost.
+   Same self-check applies to the print bed: sum every part's TOTAL footprint
+   INCLUDING lugs, feet, skirts and chamfers (not just the core body) and
+   confirm each stays inside 160x160mm — the A1-mini profile hard-rejects
+   wider even though the bed is nominally 180x180 (draft-stack-dock,
+   2026-08-12: a brief whose core body fit 160mm grew past it once mounting
+   lugs were added, and the overage was only caught by BUILD, burning a full
+   build attempt on a spec that could have been trimmed for free while
+   writing the brief).
 
 WRITE THE FILE EARLY, THEN IMPROVE IT. Before any deep research or arithmetic,
 put a COMPLETE rough brief.md on disk — every required section present, values
