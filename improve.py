@@ -45,6 +45,12 @@ EVIDENCE — read first:
   graduate to code)
 - blocks/BLOCKS.md (library gaps: what did builds hand-roll that deserves a
   verified block?)
+- `gh pr list` (open PRs on this repo) — the fix for this week's finding may
+  already be written and sitting there unmerged; if its diff (`gh pr diff
+  <n>`) already covers it, say so and move to the next finding instead of
+  writing a second, duplicate fix. 2026-11-15: PR #6 (open 35 days) already
+  contains the exact content-snapshot fix this week's own lessons.md/
+  README.md stuck-diff symptom called for.
 
 THEN improve, in priority order:
 1. Graduate any REPEATED lesson into code (gate linter check, block, or brief

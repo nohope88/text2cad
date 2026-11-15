@@ -157,6 +157,10 @@ def save_media(m: dict) -> list[str]:
     if str(doc.get("mime_type", "")).startswith("image/"):
         ext = Path(doc.get("file_name") or "x.png").suffix or ".png"
         items.append((doc["file_id"], ext, "image"))
+    elif doc.get("file_id") and not video_kind(m):
+        # any other file (STL, 3MF, ZIP, PDF…): keep its own name so the session sees what it is
+        name = "".join(c if c.isalnum() or c in "._-" else "_" for c in (doc.get("file_name") or "file"))
+        items.append((doc["file_id"], "_" + name, "file"))
     vk = video_kind(m)
     if vk:
         v = m[vk]
@@ -169,8 +173,8 @@ def save_media(m: dict) -> list[str]:
         if not fpath:
             # the cloud Bot API serves files up to 20 MB; a bigger video fails here
             log(f"media: getFile failed for message {m.get('message_id')}: {r.get('description')}")
-            if label == "video":
-                saved.append(f"video not downloaded: {r.get('description') or 'getFile failed'}"
+            if label in ("video", "file"):
+                saved.append(f"{label} not downloaded: {r.get('description') or 'getFile failed'}"
                              " (the bot can fetch files up to 20 MB)")
             continue
         MEDIA.mkdir(parents=True, exist_ok=True)
@@ -198,6 +202,8 @@ def body_of(m: dict) -> str:
         return "[image]"
     if video_kind(m):
         return "[video]"
+    if (m.get("document") or {}).get("file_id"):
+        return f"[file: {m['document'].get('file_name') or 'unnamed'}]"
     for kind in ("voice", "audio", "video", "document", "sticker"):
         if kind in m:
             return f"[{kind} — not supported by the bridge, send text]"
