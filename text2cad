@@ -1227,7 +1227,7 @@ def hero_render(slug: str, out_dir: Path) -> Path | None:
     return pngs[-1] if pngs else None
 
 
-def repair_prompt(slug: str, out_dir: Path, fails: list) -> str:
+def repair_prompt(slug: str, out_dir: Path, fails: list, amended: bool = False) -> str:
     gate_cmd = f"{VENV_PY} {GATE_PY} {out_dir}"
     return f"""{HEADLESS_WARNING}
 
@@ -1240,6 +1240,18 @@ question about that image, not about prose. Take silhouette, part count and
 feature presence from it; take every number from brief.md; never let it argue
 you past the printability non-negotiables.
 """ if (out_dir / "reference" / "concept.png").is_file() else ""}
+{"""
+AMENDMENT JUST LANDED (`--amend` rewrote brief.md from arbitration's
+proposal). Before touching geometry, diff params.py against its pre-amendment
+values (git) and grep every changed name in BOTH directions — every
+cutter/feature that CONSUMES it, AND every fit_checks.py mock that ASSERTS
+against it. A mock still built from the old number fails closed and looks
+exactly like a fresh geometry bug, not a stale check: draft-stack-dock
+(2026-08-12, lessons.md) left a finger-pad mock at the pre-amendment
+SCALLOP_D=10 after the amendment shrank the wall it presses into to 6.0mm —
+the mock then demanded clearance no geometry could satisfy until it was
+rebuilt from the new value.
+""" if amended else ""}
 
 0. Read `panel_history.json` (every prior panel verdict, oldest -> newest) and
    the current `review_*.md` files FIRST. Treat prior verdicts as a REGRESSION
@@ -1807,7 +1819,7 @@ def main() -> int:
         spent[tier] += 1
         attempt += 1
         verdict = run_phase(f"repair{attempt}",
-                            repair_prompt(slug, out_dir, fails) +
+                            repair_prompt(slug, out_dir, fails, amended=args.amend) +
                             f"\nSeverity tier: {tier.upper()} (attempt {spent[tier]}/{TIER_BUDGET[tier]} for this tier).",
                             out_dir, REPAIR_TURNS, run_log, timeout_s=5400)
         stuck = (verdict or "").strip().splitlines()[-1] if (verdict or "").strip() else ""
